@@ -1,0 +1,22 @@
+# Runtime data — ignore everything in data/ except home-docs (user knowledge)
+data/*
+!data/home-docs/
+
+# Model weights — large binary files, never commit
+models/
+
+# Smoke workspace — claw session data
+smoke-workspace/
+
+# Live secrets — use .env.example as the template
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Editor
+.vscode/
+*.swp

@@ -1,0 +1,151 @@
+# Podman Compose — AI Home Butler, Phase 4 (Smart Home + MQTT)
+# Usage: podman-compose up --build
+#
+# llama.cpp C++ server is used in ALL environments — no compose.yml changes between machines.
+# Only .env needs to differ:
+#
+#   WSL + RTX A3000 12 GB:  N_GPU_LAYERS=99   MODEL_FILE=Qwen3.5-2B-Q4_K_M.gguf
+#   DELL Quadro P1000 4 GB: N_GPU_LAYERS=99   MODEL_FILE=Qwen3.5-2B-Q4_K_M.gguf  (fits fully)
+#   CPU-only fallback:      N_GPU_LAYERS=0    (also remove the `devices:` block below)
+#
+# Override any variable via .env file (copy from .env.example)
+
+services:
+  model-server:
+    # llama.cpp C++ server — same image used on WSL, DELL, and Mac.
+    # No image or compose changes needed across environments; only .env varies.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command:
+      - -m
+      - /models/${MODEL_FILE:-Qwen3.5-2B-Q4_K_M.gguf}
+      - -ngl
+      - "${N_GPU_LAYERS:-99}"
+      - --ctx-size
+      - "${MODEL_CTX_SIZE:-4096}"
+      - --flash-attn
+      - "on"
+      - -np
+      - "1"
+      - -t
+      - "8"
+      - --port
+      - "8080"
+      - --host
+      - "0.0.0.0"
+    devices:
+      - nvidia.com/gpu=all
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "8080:8080"   # expose for direct curl checks (task 0.2)
+
+  mosquitto:
+    # Eclipse Mosquitto MQTT broker — Phase 4 Smart Home
+    # Butler publishes commands to butler/ugv/navigate, subscribes to butler/user/context
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto:/mosquitto/config:ro
+      - ./data/mosquitto:/mosquitto/data
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Containerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MODEL_SERVER_URL: "http://model-server:8080/v1"
+      MODEL_NAME: "${MODEL_NAME:-local}"
+      MODEL_CTX_SIZE: "${MODEL_CTX_SIZE:-2048}"
+      MAX_TOKENS: "${MAX_TOKENS:-1024}"
+      TEMPERATURE: "${TEMPERATURE:-0.2}"
+      # Phase 1
+      CHROMA_URL: "http://chromadb:8000"
+      DB_PATH: "/data/butler.db"
+      ALPHA_VANTAGE_KEY: "${ALPHA_VANTAGE_KEY:-}"
+      PRICE_CACHE_TTL: "${PRICE_CACHE_TTL:-300}"
+      IN_RATE_PER_1M: "${IN_RATE_PER_1M:-25.0}"
+      OUT_RATE_PER_1M: "${OUT_RATE_PER_1M:-200.0}"
+      # Phase 3
+      STT_URL: "http://stt:8100"
+      TTS_URL: "http://tts:8200"
+      # Phase 4
+      RAG_URL: "http://rag:8300"
+      MQTT_HOST: "mosquitto"
+      MQTT_PORT: "1883"
+      HA_URL: "${HA_URL:-}"
+      HA_TOKEN: "${HA_TOKEN:-}"
+      # Phase 6
+      FRIGATE_URL: "${FRIGATE_URL:-http://frigate:5000}"
+    volumes:
+      - ./data:/data
+      - ./data/onnx-cache:/root/.cache/chroma  # persists ONNX model across rebuilds
+    depends_on:
+      - model-server
+      - chromadb
+      - stt
+      - tts
+      - rag
+      - mosquitto
+    restart: on-failure   # retry until model-server is ready
+
+  stt:
+    build:
+      context: ./stt
+      dockerfile: Containerfile
+    ports:
+      - "8100:8100"
+    environment:
+      WHISPER_MODEL: "${WHISPER_MODEL:-tiny}"
+      WHISPER_DEVICE: "${WHISPER_DEVICE:-cpu}"
+      WHISPER_COMPUTE: "${WHISPER_COMPUTE:-int8}"
+      HF_HOME: "/data/whisper-cache"
+    volumes:
+      - ./data/whisper-cache:/data/whisper-cache
+    restart: unless-stopped
+
+  tts:
+    build:
+      context: ./tts
+      dockerfile: Containerfile
+    ports:
+      - "8200:8200"
+    environment:
+      VOICE_NAME: "${VOICE_NAME:-en_US-lessac-medium}"
+      VOICE_DIR: "/data/tts-voices"
+    volumes:
+      - ./data/tts-voices:/data/tts-voices
+    restart: unless-stopped
+
+  rag:
+    build:
+      context: ./rag
+      dockerfile: Containerfile
+    ports:
+      - "8300:8300"
+    environment:
+      CHROMA_HOST: "chromadb"
+      CHROMA_PORT: "8000"
+      DOCS_DIR: "/data/home-docs"
+      RAG_TOP_K: "${RAG_TOP_K:-3}"
+      CHUNK_SIZE: "${CHUNK_SIZE:-400}"
+    volumes:
+      - ./data/home-docs:/data/home-docs
+      - ./data/onnx-cache:/root/.cache/chroma  # shares ONNX model with orchestrator
+    depends_on:
+      - chromadb
+    restart: unless-stopped
