@@ -1,6 +1,17 @@
-FROM python:3.12-slim
+# CUDA runtime base — gives faster-whisper access to the GPU via WHISPER_DEVICE=cuda.
+# CPU-only fallback: swap this line for  FROM python:3.12-slim
+#   and remove  devices: - nvidia.com/gpu=all  from the stt service in compose.yml.
+FROM nvidia/cuda:13.3.0-runtime-ubuntu26.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# Isolated venv avoids PEP 668 "externally managed environment" errors on Ubuntu 26.04
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -5,8 +5,11 @@
 # Only .env needs to differ:
 #
 #   WSL + RTX A3000 12 GB:  N_GPU_LAYERS=99   MODEL_FILE=Qwen3.5-2B-Q4_K_M.gguf
-#   DELL Quadro P1000 4 GB: N_GPU_LAYERS=99   MODEL_FILE=Qwen3.5-2B-Q4_K_M.gguf  (fits fully)
-#   CPU-only fallback:      N_GPU_LAYERS=0    (also remove the `devices:` block below)
+#                           KV_CACHE_TYPE=f16  (12 GB VRAM — no quantisation needed)
+#   DELL Quadro P1000 4 GB: N_GPU_LAYERS=99   MODEL_FILE=Qwen3.5-2B-Q4_K_M.gguf
+#                           KV_CACHE_TYPE=q4_0 MODEL_CTX_SIZE=81920  WHISPER_DEVICE=cuda
+#   CPU-only fallback:      N_GPU_LAYERS=0    KV_CACHE_TYPE=f16
+#                           (also remove the `devices:` blocks for model-server and stt)
 #
 # Override any variable via .env file (copy from .env.example)
 
@@ -24,6 +27,10 @@ services:
       - "${MODEL_CTX_SIZE:-4096}"
       - --flash-attn
       - "on"
+      - --cache-type-k
+      - "${KV_CACHE_TYPE:-f16}"
+      - --cache-type-v
+      - "${KV_CACHE_TYPE:-f16}"
       - -np
       - "1"
       - -t
@@ -91,6 +98,11 @@ services:
       HA_TOKEN: "${HA_TOKEN:-}"
       # Phase 6
       FRIGATE_URL: "${FRIGATE_URL:-http://frigate:5000}"
+      # MCP — comma-separated SSE base-URLs; add HA MCP here when ready
+      # e.g. MCP_SERVERS=http://fetch-mcp:8400,http://homeassistant.local:8123/api/mcp_server
+      MCP_SERVERS: "${MCP_SERVERS:-http://fetch-mcp:8400}"
+      # MCP_TOKENS: comma-separated Bearer tokens (same order as MCP_SERVERS)
+      MCP_TOKENS: "${MCP_TOKENS:-}"
     volumes:
       - ./data:/data
       - ./data/onnx-cache:/root/.cache/chroma  # persists ONNX model across rebuilds
@@ -101,6 +113,7 @@ services:
       - tts
       - rag
       - mosquitto
+      - fetch-mcp
     restart: on-failure   # retry until model-server is ready
 
   stt:
@@ -114,6 +127,8 @@ services:
       WHISPER_DEVICE: "${WHISPER_DEVICE:-cpu}"
       WHISPER_COMPUTE: "${WHISPER_COMPUTE:-int8}"
       HF_HOME: "/data/whisper-cache"
+    devices:
+      - nvidia.com/gpu=all   # remove for CPU-only fallback; set WHISPER_DEVICE=cpu in .env
     volumes:
       - ./data/whisper-cache:/data/whisper-cache
     restart: unless-stopped
@@ -148,4 +163,18 @@ services:
       - ./data/onnx-cache:/root/.cache/chroma  # shares ONNX model with orchestrator
     depends_on:
       - chromadb
+    restart: unless-stopped
+
+  fetch-mcp:
+    # MCP fetch server — exposes fetch_url tool via SSE on port 8400.
+    # The orchestrator auto-discovers it via MCP_SERVERS=http://fetch-mcp:8400.
+    # To disable: remove from MCP_SERVERS in .env and comment this service out.
+    build:
+      context: ./mcp-servers/fetch
+      dockerfile: Containerfile
+    ports:
+      - "8400:8400"
+    environment:
+      MCP_PORT: "8400"
+      FETCH_MAX_CHARS: "${FETCH_MAX_CHARS:-6000}"
     restart: unless-stopped
