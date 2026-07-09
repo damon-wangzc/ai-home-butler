@@ -20,3 +20,9 @@ __pycache__/
 # Editor
 .vscode/
 *.swp
+
+# .github - ignore local custom agents, instructions, references and log.txt
+.github/
+
+# local/ - the local certs
+local/

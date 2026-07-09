@@ -8,3 +8,5 @@ chromadb>=0.5.3
 aiosqlite>=0.20.0
 # Phase 4
 aiomqtt>=2.3.0         # async MQTT client for subscriber + patrol_room tool
+# MCP (Model Context Protocol) client — optional but included in image
+mcp[cli]>=1.0.0        # tool discovery + SSE client for external MCP servers

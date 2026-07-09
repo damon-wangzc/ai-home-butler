@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from adapter import build_messages, call_model, extract_response
 from memory import get_memory_summary, store_turn
-from tools import dispatch_tool, setup_db, TOOL_SCHEMAS, DB_PATH
+from tools import dispatch_tool, setup_db, register_mcp_tools, TOOL_SCHEMAS, DB_PATH
+import mcp_client
 
 STT_URL = os.getenv("STT_URL", "http://stt:8100")
 TTS_URL = os.getenv("TTS_URL", "http://tts:8200")
@@ -154,6 +155,12 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_reminder_scheduler(), name="reminder_scheduler"),
     ]
     logger.info("Background tasks started: %s", [t.get_name() for t in bg_tasks])
+
+    # MCP tool discovery — non-fatal if servers are unavailable
+    mcp_schemas = await mcp_client.connect_all()
+    if mcp_schemas:
+        register_mcp_tools(mcp_schemas)
+        logger.info("MCP tools available: %d", len(mcp_schemas))
 
     yield
 

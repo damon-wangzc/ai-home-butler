@@ -342,15 +342,39 @@ async def patrol_room(room: str = "", **_: Any) -> dict:
         return {"room": room, "command": "patrol", "queued": False, "error": str(exc)}
 
 
+# ── MCP tool support ──────────────────────────────────────────────────────────
+
+# Names of tools discovered from external MCP servers (populated at startup)
+_MCP_TOOL_NAMES: set[str] = set()
+
+
+def register_mcp_tools(schemas: list[dict]) -> None:
+    """Extend TOOL_SCHEMAS in-place with tools discovered from MCP servers.
+
+    Called once during lifespan startup after mcp_client.connect_all().
+    """
+    for schema in schemas:
+        name = schema.get("function", {}).get("name", "")
+        if name:
+            _MCP_TOOL_NAMES.add(name)
+            TOOL_SCHEMAS.append(schema)
+    logger.info("mcp_tools_registered names=%s", sorted(_MCP_TOOL_NAMES))
+
+
 async def dispatch_tool(name: str, args: dict) -> Any:
     """Execute a registered tool by name.
 
-    Raises ValueError for any name not in the whitelist.
+    Checks native _REGISTRY first, then MCP tools.
+    Raises ValueError for any name not in either whitelist.
     """
-    if name not in _REGISTRY:
-        raise ValueError(f"Unknown tool: {name!r}. Allowed: {list(_REGISTRY)}")
-    logger.info("dispatch_tool name=%s args=%s", name, args)
-    return await _REGISTRY[name](**args)
+    if name in _REGISTRY:
+        logger.info("dispatch_tool native name=%s args=%s", name, args)
+        return await _REGISTRY[name](**args)
+    if name in _MCP_TOOL_NAMES:
+        import mcp_client
+        logger.info("dispatch_tool mcp name=%s args=%s", name, args)
+        return await mcp_client.call_mcp_tool(name, args)
+    raise ValueError(f"Unknown tool: {name!r}. Native: {list(_REGISTRY)} MCP: {sorted(_MCP_TOOL_NAMES)}")
 
 
 # ── OpenAI-style tool schemas (passed to model for native function calling) ────
