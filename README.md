@@ -13,7 +13,7 @@ Text in → model reasons → tools execute → answer out. No cloud required.
 graph TD
     subgraph Edge["Edge Devices (Future)"]
         ESP32_ORB["ESP32-S3 Voice Orb\n(Wake word + mic)"]
-        ESP32_P4["ESP32-P4 Command Panel\n(7\" Touch + Camera)"]
+        ESP32_P4["ESP32-P4 Command Panel\n(7&quot; Touch + Camera)"]
     end
 
     subgraph Core["AI Core — Podman Stack (WSL / DELL / Mac)"]
@@ -38,7 +38,7 @@ graph TD
     subgraph External["External (optional)"]
         AV["Alpha Vantage API\n(market prices)"]
         HA["Home Assistant\n(smart home hub)"]
-        HA_MCP["Home Assistant MCP\n(:8123/api/mcp_server/sse)"]
+        HA_MCP["Home Assistant MCP\n(:8123/mcp_server/sse)"]
         WEB["Public Web\n(weather, APIs)"]
     end
 
@@ -273,7 +273,7 @@ HA_URL=http://homeassistant.local:8123
 HA_TOKEN=<long-lived-access-token>
 
 # Add to MCP_SERVERS (comma-separated, no spaces)
-MCP_SERVERS=http://fetch-mcp:8400,http://homeassistant.local:8123/api/mcp_server
+MCP_SERVERS=http://fetch-mcp:8400,http://homeassistant.local:8123/mcp_server
 MCP_TOKENS=,<same-long-lived-access-token>   # first entry blank = fetch-mcp needs no auth
 ```
 

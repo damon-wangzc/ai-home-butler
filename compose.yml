@@ -99,7 +99,7 @@ services:
       # Phase 6
       FRIGATE_URL: "${FRIGATE_URL:-http://frigate:5000}"
       # MCP — comma-separated SSE base-URLs; add HA MCP here when ready
-      # e.g. MCP_SERVERS=http://fetch-mcp:8400,http://homeassistant.local:8123/api/mcp_server
+      # e.g. MCP_SERVERS=http://fetch-mcp:8400,http://homeassistant.local:8123/mcp_server
       MCP_SERVERS: "${MCP_SERVERS:-http://fetch-mcp:8400}"
       # MCP_TOKENS: comma-separated Bearer tokens (same order as MCP_SERVERS)
       MCP_TOKENS: "${MCP_TOKENS:-}"

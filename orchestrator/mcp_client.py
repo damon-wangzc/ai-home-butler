@@ -4,7 +4,7 @@ Discovers tools from external MCP servers and routes dispatch_tool() calls to th
 
 Config via environment variables:
   MCP_SERVERS  comma-separated SSE base-URLs
-               e.g. http://fetch-mcp:8400,http://homeassistant.local:8123/api/mcp_server
+               e.g. http://fetch-mcp:8400,http://homeassistant.local:8123/mcp_server
   MCP_TOKENS   comma-separated Bearer tokens (same order as MCP_SERVERS).
                Leave a blank entry for servers that need no auth:
                e.g. ,myHAtoken   ← first server anonymous, second authenticated
