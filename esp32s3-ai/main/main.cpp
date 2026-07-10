@@ -109,7 +109,8 @@ static void clock_task(void*) {
         // BAT_Get_Volts() returns float; convert LiPo 3.0V–4.2V range to 0–100%
         float volts = BAT_Get_Volts();
         int bat = (int)((volts - 3.0f) / 1.2f * 100.0f);
-        if (bat < 0) bat = 0; if (bat > 100) bat = 100;
+        if (bat < 0)   bat = 0;
+        if (bat > 100) bat = 100;
         UIManager::instance().on_battery_level(bat);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
