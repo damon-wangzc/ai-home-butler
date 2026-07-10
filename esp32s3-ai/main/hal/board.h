@@ -54,6 +54,9 @@
 #define AUDIO_DMA_BUF_SAMPLES 320   // 20ms @ 16kHz
 
 // --- LVGL display buffer (in PSRAM) ---
+// Guard: LVGL_Driver.h also defines this (default 10); our value (80, PSRAM-backed) takes priority
+#ifndef LVGL_BUF_LINES
 #define LVGL_BUF_LINES      80      // lines per DMA buffer (PSRAM-backed)
+#endif
 #define LVGL_TICK_MS         5
 #define LVGL_REFRESH_MS     16      // ~60fps cap

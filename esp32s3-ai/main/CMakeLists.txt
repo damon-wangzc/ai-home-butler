@@ -49,5 +49,6 @@ idf_component_register(
         esp_websocket_client  # registry: espressif/esp_websocket_client
         freertos              # built-in
         log                   # built-in — esp_log.h
+        esp_adc               # built-in — esp_adc/adc_oneshot.h used by BAT_Driver
         # cJSON is a transitive dep via esp-sr → espressif/cjson; no direct REQUIRES needed
 )

@@ -10,8 +10,10 @@
 
 #include "ST77916.h"
 
-// Option A: single smaller internal DMA buffer (10 lines) to reduce internal RAM usage for speech engine
+// LVGL_BUF_LINES: defined in board.h (80, PSRAM-backed); default 10 if not set
+#ifndef LVGL_BUF_LINES
 #define LVGL_BUF_LINES  (10)
+#endif
 #define LVGL_BUF_LEN  (EXAMPLE_LCD_WIDTH * LVGL_BUF_LINES)
 #define EXAMPLE_LVGL_TICK_PERIOD_MS    2
 
