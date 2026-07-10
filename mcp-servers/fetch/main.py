@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 _PORT = int(os.getenv("MCP_PORT", "8400"))
 _MAX_BODY = int(os.getenv("FETCH_MAX_CHARS", "6000"))
 
-mcp = FastMCP("butler-fetch")
+mcp = FastMCP("butler-fetch", host="0.0.0.0", port=_PORT)
 
 
 @mcp.tool()
@@ -40,8 +40,4 @@ async def fetch_url(url: str, max_chars: int = _MAX_BODY) -> str:
 
 
 if __name__ == "__main__":
-    import uvicorn
-    # mcp 1.x: run() no longer accepts host/port directly for SSE transport.
-    # Retrieve the Starlette app from FastMCP and serve it via uvicorn.
-    app = mcp.get_app()
-    uvicorn.run(app, host="0.0.0.0", port=_PORT)
+    mcp.run(transport="sse")
