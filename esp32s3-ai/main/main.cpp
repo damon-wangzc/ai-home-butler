@@ -139,9 +139,8 @@ extern "C" void app_main() {
     UIManager::instance().init(screen);
     UIManager::instance().on_state_change(DEVICE_STATE_CONNECTING);
 
-    // Touch: initialise controller (CST816 driver uses polling via esp_lcd_touch;
-    //         tap callback registration is not available — wire via touch task later)
-    Touch_Init();
+    // Touch: already initialised inside LCD_Init() → ST77916.c calls Touch_Init()
+    // Calling it again here would double-install I2C port 1 and abort().
 
     // WiFi
     wifi_init();
@@ -173,8 +172,11 @@ extern "C" void app_main() {
 
     // Connect to orchestrator
     ws.connect(CONFIG_AI_ORB_ORCHESTRATOR_HOST, CONFIG_AI_ORB_ORCHESTRATOR_WS_PORT);
-    OrbMqttClient::instance().connect(CONFIG_AI_ORB_MQTT_HOST, 1883,
-                                       CONFIG_AI_ORB_USER_ID);
+    // MQTT host: use dedicated broker if set, otherwise share orchestrator host
+    const char* mqtt_host = (CONFIG_AI_ORB_MQTT_HOST[0] != '\0')
+        ? CONFIG_AI_ORB_MQTT_HOST
+        : CONFIG_AI_ORB_ORCHESTRATOR_HOST;
+    OrbMqttClient::instance().connect(mqtt_host, 1883, CONFIG_AI_ORB_USER_ID);
 
     // Audio pipeline (I2S + wake word + VAD)
     ap.init();

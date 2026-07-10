@@ -52,11 +52,12 @@ services:
     # Publishes:  butler/orb/state, butler/reminders/due, butler/ugv/navigate
     # Phase 5: ESP32-S3 orb connects directly on port 1883 from the LAN
     image: eclipse-mosquitto:2
+    user: "0:0"           # run as root in dev — avoids rootless Podman UID-1883 permission issue
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto:/mosquitto/config:ro
-      - ./data/mosquitto:/mosquitto/data
+      - ./mosquitto:/mosquitto/config:ro,z
+      - ./data/mosquitto:/mosquitto/data:z
     restart: unless-stopped
 
   chromadb:
