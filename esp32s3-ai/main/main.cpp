@@ -14,8 +14,15 @@
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
 
-// LCD + LVGL drivers (from reference project — copy from esp32-s3-round-lcd)
-// These are expected to be brought in from components/ directory
+// esp_lcd_panel_io.h MUST be included here (outside extern "C") to avoid a
+// conflicting-declaration error in IDF 5.5's esp_lcd_io_i2c.h: that header
+// defines both uint32_t and i2c_master_bus_handle_t overloads of
+// esp_lcd_new_panel_io_i2c. In C++ mode they are valid overloads; inside
+// extern "C" they become C functions and the duplicate name conflicts.
+// The include guard then blocks re-processing when ST77916.h pulls it in again.
+#include <esp_lcd_panel_io.h>
+
+// LCD + LVGL drivers (from reference project)
 extern "C" {
     #include "ST77916.h"     // LCD init
     #include "LVGL_Driver.h" // lv_init, lv_disp_drv_register, tick task
@@ -85,6 +92,8 @@ static void wifi_init() {
 }
 
 // ── Touch callback (tap → wake) ───────────────────────────────────────────────
+// Called when touch tap is detected (wire to touch polling task in Phase 5b)
+__attribute__((unused))
 static void touch_tap_cb() {
     AudioPipeline::instance().trigger_wake();
     OrbMqttClient::instance().publish_touch();
@@ -93,11 +102,14 @@ static void touch_tap_cb() {
 // ── Clock task (1Hz) ─────────────────────────────────────────────────────────
 static void clock_task(void*) {
     while (true) {
-        PCF85063_Data_t rtc;
-        PCF85063_Get_Time(&rtc);
-        UIManager::instance().on_clock_tick(rtc.Hours, rtc.Minutes);
+        datetime_t rtc;
+        PCF85063_Read_Time(&rtc);                // actual API (not PCF85063_Get_Time)
+        UIManager::instance().on_clock_tick(rtc.hour, rtc.minute);
 
-        int bat = BAT_Get_Percent();
+        // BAT_Get_Volts() returns float; convert LiPo 3.0V–4.2V range to 0–100%
+        float volts = BAT_Get_Volts();
+        int bat = (int)((volts - 3.0f) / 1.2f * 100.0f);
+        if (bat < 0) bat = 0; if (bat > 100) bat = 100;
         UIManager::instance().on_battery_level(bat);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -126,8 +138,9 @@ extern "C" void app_main() {
     UIManager::instance().init(screen);
     UIManager::instance().on_state_change(DEVICE_STATE_CONNECTING);
 
-    // Touch: register tap callback
-    CST816_Set_Tap_Callback(touch_tap_cb);
+    // Touch: initialise controller (CST816 driver uses polling via esp_lcd_touch;
+    //         tap callback registration is not available — wire via touch task later)
+    Touch_Init();
 
     // WiFi
     wifi_init();
