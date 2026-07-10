@@ -617,6 +617,17 @@ Status bar (top): live clock from PCF85063 RTC, WiFi icon, battery level.
 ### Build & flash
 
 ```bash
+# 1. Copy hardware drivers from the reference project (required — not in registry)
+cd /path/to/ai-home-butler
+mkdir -p esp32s3-ai/components
+cp -r .github/reference/esp32-s3-round-lcd/components/esp_lcd_st77916 esp32s3-ai/components/
+# Copy peripheral driver sources from reference main/ into components/:
+for drv in LCD_Driver LVGL_Driver Touch_Driver Audio_Driver MIC_Driver \
+            I2C_Driver BAT_Driver PWR_Key PCF85063 QMI8658; do
+  cp -r .github/reference/esp32-s3-round-lcd/main/${drv} esp32s3-ai/components/
+done
+
+# 2. Build & flash
 cd esp32s3-ai
 . $HOME/esp/esp-idf/export.sh      # ESP-IDF v5.3+
 idf.py set-target esp32s3
