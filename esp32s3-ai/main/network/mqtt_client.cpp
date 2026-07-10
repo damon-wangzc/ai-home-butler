@@ -1,7 +1,7 @@
 #include "mqtt_client.h"
 #include "ui_manager.h"
 #include <esp_log.h>
-#include <mqtt_client.h>
+#include <mqtt_client.h>  // IDF 'mqtt' component
 #include <cJSON.h>
 #include <cstring>
 #include <ctime>
