@@ -332,7 +332,7 @@ void FaceDisplay::start_pupil_scan() {
 }
 
 void FaceDisplay::blink_timer_cb(lv_timer_t* timer) {
-    FaceDisplay* self = (FaceDisplay*)lv_timer_get_user_data(timer);
+    FaceDisplay* self = (FaceDisplay*)timer->user_data;  // lv_timer_get_user_data() not in LVGL 8.3.x
     if (self && self->current_state_ == DEVICE_STATE_IDLE) {
         self->trigger_blink();
     }

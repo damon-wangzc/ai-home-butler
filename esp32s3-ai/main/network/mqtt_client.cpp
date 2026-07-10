@@ -3,8 +3,10 @@
 #include <esp_log.h>
 #include <mqtt_client.h>  // IDF 'mqtt' component
 #include <cJSON.h>
+#include <cstdio>    // snprintf
 #include <cstring>
 #include <ctime>
+#include <algorithm> // std::min
 
 static const char* TAG = "OrbMQTT";
 
@@ -59,7 +61,7 @@ void OrbMqttClient::publish_state(device_state_t state) {
         "butler/orb/state", payload, 0, 0, 0);
 }
 
-void OrbMqttClient::event_handler(void* arg, int32_t event_id, void* event_data) {
+void OrbMqttClient::event_handler(void* arg, const char* /*event_base*/, int32_t event_id, void* event_data) {
     OrbMqttClient* self = static_cast<OrbMqttClient*>(arg);
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
 

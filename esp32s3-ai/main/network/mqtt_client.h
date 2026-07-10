@@ -2,6 +2,7 @@
 
 #include "device_state.h"
 #include <cstdint>
+#include <cstddef>   // size_t
 
 // ============================================================
 // OrbMqttClient — MQTT integration with the butler broker.
@@ -39,6 +40,7 @@ private:
     void*       client_  = nullptr;  // esp_mqtt_client_handle_t
     const char* user_id_ = "kid";
 
-    static void event_handler(void* arg, int32_t event_id, void* event_data);
+    // esp_event_handler_t signature (4 params) required by esp_mqtt_client_register_event
+    static void event_handler(void* arg, const char* event_base, int32_t event_id, void* event_data);
     void on_message(const char* topic, const char* payload, size_t len);
 };

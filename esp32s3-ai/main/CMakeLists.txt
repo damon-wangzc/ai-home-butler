@@ -6,12 +6,35 @@ idf_component_register(
         "audio/audio_pipeline.cpp"
         "network/ws_client.cpp"
         "network/mqtt_client.cpp"
+        # Hardware drivers copied from reference project
+        "LCD_Driver/esp_lcd_st77916/esp_lcd_st77916.c"
+        "LCD_Driver/ST77916.c"
+        "Touch_Driver/esp_lcd_touch/esp_lcd_touch.c"
+        "Touch_Driver/CST816.c"
+        "LVGL_Driver/LVGL_Driver.c"
+        "I2C_Driver/I2C_Driver.c"
+        "PCF85063/PCF85063.c"
+        "BAT_Driver/BAT_Driver.c"
+        "PWR_Key/PWR_Key.c"
+        "EXIO/TCA9554PWR.c"
     INCLUDE_DIRS
         "."
         "hal"
         "display"
         "audio"
-        "network"
+        # network/ intentionally omitted: avoids shadowing IDF's mqtt_client.h
+        # (main.cpp uses "network/ws_client.h" prefix; network/ files use same-dir includes)
+        # Hardware driver include dirs
+        "LCD_Driver/esp_lcd_st77916"
+        "LCD_Driver"
+        "Touch_Driver/esp_lcd_touch"
+        "Touch_Driver"
+        "LVGL_Driver"
+        "I2C_Driver"
+        "PCF85063"
+        "BAT_Driver"
+        "PWR_Key"
+        "EXIO"
     REQUIRES
         esp_wifi              # built-in
         esp_event             # built-in

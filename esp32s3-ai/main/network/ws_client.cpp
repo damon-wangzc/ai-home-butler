@@ -52,7 +52,7 @@ void WSClient::disconnect() {
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
-void WSClient::event_handler(void* arg, int32_t event_id, void* event_data) {
+void WSClient::event_handler(void* arg, const char* /*event_base*/, int32_t event_id, void* event_data) {
     WSClient* self = static_cast<WSClient*>(arg);
     esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
 

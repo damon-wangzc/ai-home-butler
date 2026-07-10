@@ -56,7 +56,8 @@ private:
     bool connected_ = false;
     void* ws_handle_ = nullptr;   // esp_websocket_client_handle_t
 
-    static void event_handler(void* arg, int32_t event_id, void* event_data);
+    // esp_event_handler_t signature (4 params) required by esp_websocket_register_events
+    static void event_handler(void* arg, const char* event_base, int32_t event_id, void* event_data);
     void on_connected();
     void on_disconnected();
     void on_data(const char* data, size_t len, bool is_binary);
