@@ -112,12 +112,18 @@ services:
       - ./data:/data
       - ./data/onnx-cache:/root/.cache/chroma  # persists ONNX model across rebuilds
     depends_on:
-      - model-server
-      - chromadb
-      - stt
-      - tts
-      - rag
-      - mosquitto
+      model-server:
+        condition: service_started
+      chromadb:
+        condition: service_started
+      stt:
+        condition: service_started
+      tts:
+        condition: service_started
+      rag:
+        condition: service_started
+      mosquitto:
+        condition: service_started
       fetch-mcp:
         condition: service_healthy
     restart: on-failure   # retry until model-server is ready
