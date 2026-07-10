@@ -350,6 +350,172 @@ bash smoke_test.sh
 
 ---
 
+## Home Assistant Integration
+
+### 1. Setup (.env)
+
+```bash
+# Use the LAN IP — containers can't resolve mDNS .local hostnames
+HA_URL=http://192.168.1.98:8123          # native REST tools (get_home_state / set_home_state)
+HA_TOKEN=<long-lived-access-token>       # HA → Profile → Long-Lived Access Tokens
+
+MCP_SERVERS=http://fetch-mcp:8400,http://192.168.1.98:8123/mcp_server
+MCP_TOKENS=,<same-long-lived-access-token>
+#           ^ first slot empty = fetch-mcp needs no auth
+```
+
+Then restart the orchestrator:
+```bash
+podman-compose up -d orchestrator
+```
+
+---
+
+### 2. Verify the MCP connection
+
+```bash
+# Should list all 22+ HA MCP tools at startup
+podman logs ai-home-butler_orchestrator_1 2>&1 | grep -i mcp
+```
+
+Expected output:
+```
+INFO mcp_client mcp_connected url=http://192.168.1.98:8123/mcp_server tools=['HassTurnOn', 'HassTurnOff', 'GetLiveContext', ...]
+INFO mcp_client mcp_tools_discovered total=23
+```
+
+---
+
+### 3. Available HA MCP tools
+
+These are auto-discovered from your HA instance at startup:
+
+| Tool | What it does |
+|------|-------------|
+| `GetLiveContext` | **Read** — returns current state of all exposed entities (lights, sensors, media players, etc.) |
+| `GetDateTime` | **Read** — current date and time from HA |
+| `HassTurnOn` | **Control** — turn on any entity (light, switch, media player…) |
+| `HassTurnOff` | **Control** — turn off any entity |
+| `HassMediaPause` | **Media** — pause a media player |
+| `HassMediaUnpause` | **Media** — resume a media player |
+| `HassMediaNext` | **Media** — skip to next track |
+| `HassMediaPrevious` | **Media** — go back to previous track |
+| `HassSetVolume` | **Media** — set volume (0–100) |
+| `HassSetVolumeRelative` | **Media** — increase/decrease volume by a step |
+| `HassMediaPlayerMute` | **Media** — mute a media player |
+| `HassMediaPlayerUnmute` | **Media** — unmute a media player |
+| `HassMediaSearchAndPlay` | **Media** — search and play media by name |
+| `HassVacuumStart` | **Vacuum** — start a robot vacuum |
+| `HassVacuumReturnToBase` | **Vacuum** — send vacuum home |
+| `HassVacuumCleanArea` | **Vacuum** — clean a specific area |
+| `HassBroadcast` | **Announce** — broadcast a TTS message to speakers |
+| `HassListAddItem` | **To-do** — add an item to a to-do list |
+| `HassListCompleteItem` | **To-do** — mark a to-do item as done |
+| `HassListRemoveItem` | **To-do** — remove a to-do item |
+| `todo_get_items` | **To-do** — read all items from a to-do list |
+
+---
+
+### 4. Test queries — reading state
+
+```bash
+# What is happening at home right now?
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"What is the current state of my home?"}' \
+  | python3 -m json.tool
+
+# What time is it according to HA?
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"What time is it?"}' \
+  | python3 -m json.tool
+
+# Read to-do list
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"What is on my to-do list?"}' \
+  | python3 -m json.tool
+
+# Check a specific sensor (use the entity id from HA)
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"What is the temperature in the living room?"}' \
+  | python3 -m json.tool
+```
+
+---
+
+### 5. Test queries — controlling devices
+
+> **Tip**: HA entity IDs follow the pattern `domain.name`, e.g. `light.living_room`, `switch.coffee_maker`, `media_player.bedroom_speaker`. Find yours in HA → Developer Tools → States.
+
+```bash
+# Turn a light on/off
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Turn on the living room light"}' \
+  | python3 -m json.tool
+
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Turn off all the lights"}' \
+  | python3 -m json.tool
+
+# Control media player
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Pause the bedroom speaker"}' \
+  | python3 -m json.tool
+
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Set the living room speaker volume to 40%"}' \
+  | python3 -m json.tool
+
+# Broadcast a message to HA speakers
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Announce that dinner is ready on all speakers"}' \
+  | python3 -m json.tool
+
+# To-do list
+curl -s -X POST http://localhost:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"default","text":"Add buy milk to my shopping list"}' \
+  | python3 -m json.tool
+```
+
+---
+
+### 6. Watch the tool calls live
+
+Run this in a second terminal while sending queries to see exactly which tool the model picks and what it returns:
+
+```bash
+podman logs -f ai-home-butler_orchestrator_1 2>&1 | grep -E "tool_call|dispatch|mcp_call|INFO|WARNING"
+```
+
+A successful HA tool call looks like:
+```
+INFO     tools      dispatch tool=HassTurnOn args={'entity_id': 'light.living_room'}
+INFO     httpx      HTTP Request: POST http://192.168.1.98:8123/mcp_server/messages/... "HTTP/1.1 200 OK"
+```
+
+---
+
+### 7. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `mcp_connect_failed … Connection refused` | Wrong HA IP | Use `http://192.168.1.98:8123` not `homeassistant.local` |
+| `mcp_connect_failed … 401` | Bad token | Regenerate token in HA → Profile → Long-Lived Access Tokens |
+| `mcp_tools_discovered total=0` | MCP Server integration not configured | HA → Settings → Integrations → Model Context Protocol Server → Configure → select entities/areas to expose |
+| Tool called but HA ignores it | Entity not exposed to MCP | In HA MCP integration config, add the entity's area or entity_id to the allow list |
+| Butler says "I can't control that" | Entity name in prompt doesn't match HA name | Ask "What devices do I have?" first to see exact names |
+
+---
+
 ## Audio (Phase 3)
 
 ### Service health checks
