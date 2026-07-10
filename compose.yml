@@ -103,6 +103,11 @@ services:
       MCP_SERVERS: "${MCP_SERVERS:-http://fetch-mcp:8400}"
       # MCP_TOKENS: comma-separated Bearer tokens (same order as MCP_SERVERS)
       MCP_TOKENS: "${MCP_TOKENS:-}"
+    # extra_hosts: only needed if you use a hostname (e.g. homeassistant.local) in
+    # MCP_SERVERS or HA_URL — containers can't resolve mDNS .local names.
+    # Simplest approach: use the LAN IP directly (e.g. 192.168.1.98) and omit this.
+    # extra_hosts:
+    #   - "homeassistant.local:${HA_HOST:-}"
     volumes:
       - ./data:/data
       - ./data/onnx-cache:/root/.cache/chroma  # persists ONNX model across rebuilds
@@ -113,7 +118,8 @@ services:
       - tts
       - rag
       - mosquitto
-      - fetch-mcp
+      fetch-mcp:
+        condition: service_healthy
     restart: on-failure   # retry until model-server is ready
 
   stt:
@@ -177,4 +183,10 @@ services:
     environment:
       MCP_PORT: "8400"
       FETCH_MAX_CHARS: "${FETCH_MAX_CHARS:-6000}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8400/sse', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
