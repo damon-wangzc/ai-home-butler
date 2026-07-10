@@ -18,8 +18,8 @@ idf_component_register(
         nvs_flash
         driver
         esp_lcd                  # built-in IDF — panel IO, ops
-        lvgl                     # from component registry
-        esp_sr                   # from component registry — wake word + AFE
+        lvgl                     # from component registry (lvgl/lvgl)
+        esp-sr                   # from component registry (espressif/esp-sr) — note hyphen
         esp_mqtt                 # built-in IDF — MQTT client
         esp_websocket_client     # from component registry (espressif/esp_websocket_client)
         json                     # built-in IDF — cJSON

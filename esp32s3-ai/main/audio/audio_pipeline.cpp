@@ -5,8 +5,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
-#include <esp_sr/esp_afe_sr_iface.h>
-#include <esp_sr/esp_afe_sr_models.h>
+#include "esp_afe_sr_iface.h"
+#include "esp_afe_sr_models.h"
 #include <cmath>
 #include <cstring>
 
