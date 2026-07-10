@@ -1,0 +1,27 @@
+## IDF Component Manager manifest
+## Run `idf.py update-dependencies` to resolve
+
+dependencies:
+  idf: ">=5.2.0"
+
+  # LVGL UI framework
+  lvgl/lvgl:
+    version: "~8.3.0"
+    rules:
+      - if: "idf_version >= 5.0.0"
+
+  # ST77916 round display driver (Waveshare / Espressif panel component)
+  espressif/esp_lcd_st77916:
+    version: "*"
+
+  # WebSocket client (esp-protocols)
+  espressif/esp-protocols:
+    version: ">=0.3.0"
+    components:
+      - esp_websocket_client
+
+  # ESP-SR: wake word + AFE (Audio Front-End / VAD)
+  espressif/esp-sr:
+    version: ">=2.0.0"
+
+  # cJSON is bundled with IDF — no entry needed

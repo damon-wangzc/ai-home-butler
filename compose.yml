@@ -1,4 +1,4 @@
-# Podman Compose — AI Home Butler, Phase 4 (Smart Home + MQTT)
+# Podman Compose — AI Home Butler, Phase 5 (Voice Orb + Edge Devices)
 # Usage: podman-compose up --build
 #
 # llama.cpp C++ server is used in ALL environments — no compose.yml changes between machines.
@@ -47,8 +47,10 @@ services:
       - "8080:8080"   # expose for direct curl checks (task 0.2)
 
   mosquitto:
-    # Eclipse Mosquitto MQTT broker — Phase 4 Smart Home
-    # Butler publishes commands to butler/ugv/navigate, subscribes to butler/user/context
+    # Eclipse Mosquitto MQTT broker — Phase 4/5
+    # Subscribes: butler/user/context, butler/orb/touch
+    # Publishes:  butler/orb/state, butler/reminders/due, butler/ugv/navigate
+    # Phase 5: ESP32-S3 orb connects directly on port 1883 from the LAN
     image: eclipse-mosquitto:2
     ports:
       - "1883:1883"

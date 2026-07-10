@@ -1,0 +1,28 @@
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "display/face_display.cpp"
+        "display/ui_manager.cpp"
+        "audio/audio_pipeline.cpp"
+        "network/ws_client.cpp"
+        "network/mqtt_client.cpp"
+    INCLUDE_DIRS
+        "."
+        "hal"
+        "display"
+        "audio"
+        "network"
+    REQUIRES
+        esp_wifi
+        esp_event
+        nvs_flash
+        driver
+        esp_lcd
+        lvgl
+        esp_sr
+        esp_mqtt
+        esp_websocket_client
+        json
+        freertos
+        log
+)

@@ -50,12 +50,17 @@ async def _handle_mqtt(topic: str, payload: bytes) -> None:
     """Dispatch incoming MQTT messages."""
     global _active_user_id
     try:
+        data = json.loads(payload.decode())
         if topic == "butler/user/context":
-            data = json.loads(payload.decode())
-            user = data.get("user", "").strip()
+            # ESP32 orb publishes user_id; legacy devices may publish user
+            user = (data.get("user_id") or data.get("user", "")).strip()
             if user:
                 _active_user_id = user
-                logger.info("mqtt_user_context user_id=%s", user)
+                logger.info("mqtt_user_context user_id=%s source=%s",
+                            user, data.get("source", "unknown"))
+        elif topic == "butler/orb/touch":
+            logger.info("orb_touch ts=%s active_user=%s",
+                        data.get("ts", ""), _active_user_id)
     except Exception as exc:
         logger.warning("mqtt_handle_error topic=%s: %s", topic, exc)
 
@@ -77,6 +82,57 @@ async def _mqtt_listener() -> None:
         except Exception as exc:
             logger.error("MQTT unexpected error: %s — retry in 10s", exc)
             await asyncio.sleep(10)
+
+
+# ── Phase 5: Orb helpers ──────────────────────────────────────────────────────
+
+async def _publish_orb_state(state: str, text: str = "", emotion: str = "") -> None:
+    """Publish face/state update to butler/orb/state for the ESP32-S3 orb.
+
+    Non-fatal — silently skipped if the MQTT broker is unreachable or the
+    orb is not connected.
+    """
+    try:
+        payload = json.dumps({
+            "state": state,
+            "text": text[:80] if text else "",
+            "emotion": emotion,
+        })
+        async with aiomqtt.Client(MQTT_HOST, port=MQTT_PORT) as mc:
+            await mc.publish("butler/orb/state", payload=payload.encode(), qos=0)
+        logger.debug("orb_state state=%s", state)
+    except Exception as exc:
+        logger.debug("orb_state_publish_skip: %s", exc)
+
+
+def _ensure_wav(audio_bytes: bytes,
+                sample_rate: int = 16000,
+                channels: int = 1,
+                bit_depth: int = 16) -> bytes:
+    """Wrap raw PCM bytes in a minimal WAV header if not already WAV.
+
+    The ESP32-S3 orb streams raw 16-bit/16kHz/mono PCM; the STT service
+    expects a WAV file. Pass-through if audio_bytes already starts with RIFF.
+    """
+    if len(audio_bytes) >= 4 and audio_bytes[:4] == b'RIFF':
+        return audio_bytes
+    import struct
+    data_len = len(audio_bytes)
+    byte_rate = sample_rate * channels * bit_depth // 8
+    block_align = channels * bit_depth // 8
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF', 36 + data_len, b'WAVE',
+        b'fmt ', 16,
+        1,            # PCM format
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bit_depth,
+        b'data', data_len,
+    )
+    return header + audio_bytes
 
 
 # ── Phase 4: Reminder scheduler ───────────────────────────────────────────────
@@ -171,7 +227,7 @@ async def lifespan(app: FastAPI):
     logger.info("Background tasks stopped")
 
 
-app = FastAPI(title="Butler Orchestrator", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Butler Orchestrator", version="0.3.0", lifespan=lifespan)
 
 
 class AskRequest(BaseModel):
@@ -242,14 +298,18 @@ async def ask(req: AskRequest):
 
 @app.websocket("/audio")
 async def audio(ws: WebSocket):
-    """WebSocket audio endpoint.
+    """WebSocket audio endpoint — Phase 3/5.
 
-    Client sends raw WAV bytes → STT → ask → TTS → server sends WAV bytes back.
-    First message may optionally be a JSON text frame {"user_id": "..."}.
-    Subsequent messages are binary WAV frames.
+    Client sends raw PCM or WAV bytes → STT → ask → TTS → server sends WAV bytes back.
+    Server also sends JSON text frames to drive the ESP32-S3 orb face:
+      {"type":"state","state":"thinking"}
+      {"type":"state","state":"speaking","text":"..."}
+      {"type":"end"}
+    First message may optionally be a JSON text frame {"user_id": "...", "source": "..."}.
+    Subsequent messages are binary audio frames (raw PCM 16kHz/16-bit/mono, or WAV).
     """
     await ws.accept()
-    user_id = "default"
+    user_id = _active_user_id
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             while True:
@@ -268,10 +328,10 @@ async def audio(ws: WebSocket):
                 if not audio_bytes:
                     continue
 
-                # STT
+                # STT — wrap raw PCM in WAV header if needed (ESP32 orb sends raw PCM)
                 stt_resp = await client.post(
                     f"{STT_URL}/stt",
-                    files={"file": ("audio.wav", audio_bytes, "audio/wav")},
+                    files={"audio": ("audio.wav", _ensure_wav(audio_bytes), "audio/wav")},
                 )
                 stt_resp.raise_for_status()
                 transcript = stt_resp.json().get("text", "")
@@ -279,6 +339,11 @@ async def audio(ws: WebSocket):
 
                 if not transcript.strip():
                     continue
+
+                # Signal thinking state to orb face (MQTT + WebSocket JSON frame)
+                await _publish_orb_state("thinking")
+                with suppress(Exception):
+                    await ws.send_text(json.dumps({"type": "state", "state": "thinking"}))
 
                 # Ask orchestrator
                 try:
@@ -289,7 +354,17 @@ async def audio(ws: WebSocket):
                     response_text = result["response"]
 
                 if not response_text.strip():
+                    await _publish_orb_state("idle")
                     continue
+
+                # Signal speaking state to orb face
+                await _publish_orb_state("speaking", text=response_text)
+                with suppress(Exception):
+                    await ws.send_text(json.dumps({
+                        "type": "state",
+                        "state": "speaking",
+                        "text": response_text[:80],
+                    }))
 
                 # TTS
                 tts_resp = await client.post(
@@ -298,6 +373,11 @@ async def audio(ws: WebSocket):
                 )
                 tts_resp.raise_for_status()
                 await ws.send_bytes(tts_resp.content)
+
+                # Signal end of response
+                with suppress(Exception):
+                    await ws.send_text(json.dumps({"type": "end"}))
+                await _publish_orb_state("idle")
 
     except WebSocketDisconnect:
         logger.info("audio WebSocket disconnected user_id=%s", user_id)

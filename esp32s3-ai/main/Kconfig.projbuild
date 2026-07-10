@@ -1,0 +1,46 @@
+menu "AI Orb Configuration"
+
+    config AI_ORB_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+        help
+            Name of the WiFi network to connect to.
+
+    config AI_ORB_WIFI_PASSWORD
+        string "WiFi Password"
+        default ""
+        help
+            Password for the WiFi network.
+
+    config AI_ORB_ORCHESTRATOR_HOST
+        string "Orchestrator Host IP"
+        default "192.168.1.10"
+        help
+            IP address of the butler orchestrator (WSL or DELL).
+
+    config AI_ORB_ORCHESTRATOR_WS_PORT
+        int "Orchestrator WebSocket Port"
+        default 8000
+        help
+            Port for the WebSocket /audio endpoint.
+
+    config AI_ORB_MQTT_HOST
+        string "MQTT Broker Host"
+        default ""
+        help
+            IP address of the Mosquitto MQTT broker.
+            Leave blank to use the same host as the orchestrator.
+
+    config AI_ORB_USER_ID
+        string "User ID"
+        default "kid"
+        help
+            User ID sent in MQTT butler/user/context messages.
+
+    config AI_ORB_WAKE_WORD
+        string "Wake Word Model"
+        default "wn9_hilexin"
+        help
+            ESP-SR wake word model name.
+
+endmenu

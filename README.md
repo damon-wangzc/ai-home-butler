@@ -3,7 +3,7 @@
 A local AI assistant stack running entirely on your own hardware.
 Text in → model reasons → tools execute → answer out. No cloud required.
 
-**Current phase**: Phase 4 complete (RAG home knowledge base).
+**Current phase**: Phase 5 in progress — ESP32-S3 Voice Orb + Edge Devices.
 
 ---
 
@@ -11,9 +11,9 @@ Text in → model reasons → tools execute → answer out. No cloud required.
 
 ```mermaid
 graph TD
-    subgraph Edge["Edge Devices (Future)"]
-        ESP32_ORB["ESP32-S3 Voice Orb\n(Wake word + mic)"]
-        ESP32_P4["ESP32-P4 Command Panel\n(7&quot; Touch + Camera)"]
+    subgraph Edge["Edge Devices (Phase 5 — In Progress)"]
+        ESP32_ORB["ESP32-S3 Voice Orb\n(Wake word + touch)\nfirmware: esp32s3-ai/"]
+        ESP32_P4["ESP32-P4 Dashboard\n(7&quot; Touch + Camera)\nplanned"]
     end
 
     subgraph Core["AI Core — Podman Stack (WSL / DELL / Mac)"]
@@ -43,7 +43,9 @@ graph TD
     end
 
     %% Edge → Core
-    ESP32_ORB -- "WebSocket audio" --> ORCH
+    ESP32_ORB -- "WebSocket PCM audio" --> ORCH
+    ESP32_ORB -- "MQTT butler/user/context\nbutler/orb/touch" --> MQTT
+    MQTT -- "butler/orb/state" --> ESP32_ORB
     ESP32_P4 -- "WebSocket audio\nMQTT user context" --> ORCH
     ESP32_P4 -- "MQTT face detect" --> MQTT
 
@@ -117,19 +119,28 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant D as Device (ESP32 / client)
+    participant D as Device (ESP32-S3 Orb / client)
     participant O as Orchestrator
     participant S as STT (Whisper)
+    participant M as Model-server
     participant T as TTS (Piper)
+    participant MQ as Mosquitto
 
-    D->>O: WS connect → send {user_id}
-    D->>O: send WAV bytes
-    O->>S: POST /stt (WAV)
+    D->>O: WS connect → JSON {"user_id":"kid","source":"orb"}
+    D->>O: binary PCM frames (16kHz / 16-bit / mono)
+    O->>S: POST /stt audio= (WAV — raw PCM wrapped automatically)
     S-->>O: {transcript}
-    Note over O: runs same /ask logic internally
+    O-->>D: JSON {"type":"state","state":"thinking"}
+    O->>MQ: PUBLISH butler/orb/state {state:thinking}
+    O->>M: /v1/chat/completions (+ tools)
+    M-->>O: response text
+    O-->>D: JSON {"type":"state","state":"speaking","text":"..."}
+    O->>MQ: PUBLISH butler/orb/state {state:speaking,text:...}
     O->>T: POST /tts {text: response}
     T-->>O: WAV bytes
-    O-->>D: send WAV bytes
+    O-->>D: binary WAV bytes (TTS audio)
+    O-->>D: JSON {"type":"end"}
+    O->>MQ: PUBLISH butler/orb/state {state:idle}
 ```
 
 ---
@@ -538,23 +549,33 @@ aplay /tmp/butler.wav   # or: ffplay -nodisp -autoexit /tmp/butler.wav
 # Record a short clip first (requires arecord)
 arecord -d 3 -f cd /tmp/test.wav
 curl -s -X POST http://127.0.0.1:8100/stt \
-  -F 'file=@/tmp/test.wav' | python3 -m json.tool
+  -F 'audio=@/tmp/test.wav' | python3 -m json.tool
 ```
 
 ### WebSocket audio round-trip
 ```bash
 # Requires: pip install websockets
 python3 - <<'EOF'
-import asyncio, websockets, pathlib
+import asyncio, websockets, pathlib, json
 
 async def test():
     uri = "ws://127.0.0.1:8000/audio"
     wav = pathlib.Path("/tmp/test.wav").read_bytes()  # your WAV file
     async with websockets.connect(uri) as ws:
-        import json
-        await ws.send(json.dumps({"user_id": "default"}))
+        # Send config frame first
+        await ws.send(json.dumps({"user_id": "default", "source": "test"}))
         await ws.send(wav)
-        response_wav = await ws.recv()
+        # Receive frames: JSON state frames, then binary TTS audio, then {"type":"end"}
+        response_wav = b""
+        while True:
+            msg = await ws.recv()
+            if isinstance(msg, str):
+                frame = json.loads(msg)
+                print(f"state frame: {frame}")
+                if frame.get("type") == "end":
+                    break
+            else:
+                response_wav = msg
         pathlib.Path("/tmp/response.wav").write_bytes(response_wav)
         print(f"Received {len(response_wav)} bytes of TTS audio")
 
@@ -574,6 +595,93 @@ aplay /tmp/response.wav
 
 Set in `.env`: `WHISPER_MODEL=base`  (restart stt container to take effect)
 
+## ESP32-S3 Voice Orb (Phase 5)
+
+The Voice Orb is a [Waveshare ESP32-S3-Touch-LCD-1.85](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85) — a 360×360 round touch display with built-in WiFi that sits on the desk and lets the family interact with Butler by voice or touch. The firmware is in `esp32s3-ai/`. Full design documentation is in [`.github/instructions/esp32s3-orb.md`](.github/instructions/esp32s3-orb.md).
+
+### Face expressions
+
+The round display shows a StackChan-inspired animated face that reflects the current state:
+
+| State | Face | Accent ring |
+|-------|------|-------------|
+| IDLE | Slow blink every ~3.5 s, soft smile, pupils drift | Blue `#4488FF` |
+| LISTENING | Wide eyes, small "O" mouth | Green `#44FF88` |
+| THINKING | Pupils scan left ↔ right, closed mouth | Amber `#FFAA00` |
+| SPEAKING | Mouth arc driven by PCM RMS amplitude | Cyan `#00CCFF` |
+| ERROR | Left eye squinted, frown | Red `#FF4444` |
+| CONNECTING | Half-closed eyes | Grey `#888888` |
+
+Status bar (top): live clock from PCF85063 RTC, WiFi icon, battery level.
+
+### Build & flash
+
+```bash
+cd esp32s3-ai
+. $HOME/esp/esp-idf/export.sh      # ESP-IDF v5.3+
+idf.py set-target esp32s3
+idf.py menuconfig                   # AI Orb Configuration → fill in values below
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+Key settings under **AI Orb Configuration** in `menuconfig`:
+
+| Setting | Example |
+|---------|---------|
+| WiFi SSID / Password | your home network |
+| Orchestrator Host IP | `192.168.1.10` — WSL: run `hostname -I` to find it |
+| Orchestrator WS Port | `8000` |
+| MQTT Broker Host | same as orchestrator |
+| User ID | `kid` (used in `butler/user/context` MQTT messages) |
+| Wake Word Model | `wn9_hilexin` (say "Hi Lexin" to wake) |
+
+> **Important**: use the host machine's **LAN IP**, not `127.0.0.1`. The ESP32 is a physical LAN device and cannot reach localhost.
+
+### How voice works end-to-end
+
+```
+[Say "Hi Lexin" or tap screen]
+        ↓  MQTT: butler/user/context {user_id:kid, source:orb}
+[Orb streams PCM → ws://HOST:8000/audio]
+        ↓  Orchestrator wraps PCM → WAV, calls STT
+[Orchestrator sends {"type":"state","state":"thinking"}]
+        ↓  Face: pupils scan left/right (amber ring)
+[Orchestrator calls LLM, calls tools if needed]
+[Orchestrator sends {"type":"state","state":"speaking","text":"..."}]
+        ↓  Face: mouth ready (cyan ring)
+[Orchestrator sends WAV bytes (TTS audio)]
+        ↓  Orb plays audio; mouth arc driven by PCM RMS
+[Orchestrator sends {"type":"end"}  →  MQTT: butler/orb/state {state:idle}]
+        ↓  Face: back to idle blink (blue ring)
+```
+
+### MQTT topics
+
+| Topic | Direction | Example payload |
+|-------|-----------|----------------|
+| `butler/user/context` | Orb → Server | `{"user_id":"kid","source":"orb","action":"wake"}` |
+| `butler/orb/touch` | Orb → Server | `{"type":"tap","ts":1234567890}` |
+| `butler/orb/state` | Server → Orb | `{"state":"thinking","text":"","emotion":""}` |
+
+Monitor MQTT live:
+```bash
+# from the host (requires mosquitto-clients)
+mosquitto_sub -h 127.0.0.1 -p 1883 -t 'butler/#' -v
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `WS connect failed` in serial monitor | Wrong orchestrator IP/port | Check `menuconfig` → Orchestrator Host; use LAN IP from `hostname -I` |
+| Orb connects but STT returns empty | Silent audio / wrong mic pin | Verify `PIN_MIC_DIN` in `board.h`; check mic wiring |
+| Face stuck on CONNECTING | WiFi wrong | Re-run `menuconfig`, check SSID/password, reflash |
+| Mouth doesn't animate | SPEAKING state not reached | Check `podman logs orchestrator` for `orb_state state=speaking` |
+| MQTT topics not received | Broker unreachable from ESP32 | Port 1883 must be open on host LAN interface; check firewall |
+
+---
+
 ## Build Roadmap
 
 ```mermaid
@@ -586,8 +694,8 @@ gantt
     Phase 3 · Audio (Whisper STT + Piper TTS, WebSocket)        :done, p3, after p1, 30d
     Phase 4 · RAG (home-docs knowledge base)   :done,    p4, after p3, 30d
     section Smart Home
-    Phase 4b · Smart Home (HA tools via MQTT)  :active,  p4b, 2025-05-01, 60d
-    Phase 5 · Edge Devices (ESP32 orb + P4 panel) :        p5, after p4b, 60d
+    Phase 4b · Smart Home (HA tools via MQTT)  :done,    p4b, 2025-05-01, 60d
+    Phase 5 · Edge Devices (ESP32 orb + P4 panel) :active,  p5, after p4b, 60d
     section Vision & Robotics
     Phase 6 · Frigate NVR + face context       :        p6, after p5, 45d
     Phase 7 · UGV Rover (ROS 2 + MQTT)         :        p7, after p6, 90d
@@ -599,11 +707,10 @@ gantt
 | 1 — Memory & Tools | ✓ Done | ChromaDB memory, portfolio + market price tools, cost tracking |
 | 3 — Audio | ✅ Done | Whisper STT + Piper TTS over WebSocket |
 | 4 — RAG | ✅ Done | Home knowledge base, auto-indexes `data/home-docs/` |
-| 4b — Smart Home | 🔧 Active | Home Assistant tools via MQTT (develop on WSL) |
-| 5 — Edge Devices | Planned | ESP32 voice orb + P4 dashboard (point at WSL IP during dev) |
+| 4b — Smart Home | ✅ Done | Home Assistant native + MCP tools; MQTT smart home control |
+| 5 — Edge Devices | 🔧 Active | ESP32-S3 Voice Orb firmware scaffold in `esp32s3-ai/`; orb → orchestrator wiring in progress |
 | 6 — Vision | Planned | Frigate NVR, face-detect context piped via MQTT |
 | 7 — Robotics | Planned | UGV Rover (ROS 2), mobile speaker + camera |
-| 6 — Robotics | Planned | UGV rover + Frigate NVR (develop on WSL) |
 | 2 — DELL Migration | Deferred (after Phase 6) | Deploy complete tested stack to DELL — `.env` change only |
 | 7 — Mac Mini | Planned | Final migration to Docker + M4 Metal |
 
