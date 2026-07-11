@@ -40,6 +40,13 @@ static uint8_t*       s_play_queue_storage = nullptr;  // allocated in PSRAM
 // listening prematurely.
 #define POST_WAKE_GRACE_MS  3500
 
+// Audio stream delay: do not send PCM frames to the orchestrator for this
+// many ms after wake.  During this window the greeting WAV binary is being
+// received on the same WebSocket connection; concurrent writes cause
+// transport_poll_write(0) errors and disconnects.  2000 ms covers greeting
+// delivery (~500 ms) + playback (~1.5 s).
+#define AUDIO_STREAM_DELAY_MS  2000
+
 // Speaker volume (0–100 %).  Applied in software before writing to I2S.
 // The PCM5101 has no volume register, so we scale the 16-bit samples.
 #define SPEAKER_VOLUME_PCT  30
@@ -180,18 +187,24 @@ void AudioPipeline::mic_task(void* arg) {
         float rms = self->compute_rms(buf, samples);
 
         if (self->streaming_) {
-            // Send frame to orchestrator
-            if (self->send_cb_) {
-                self->send_cb_((const uint8_t*)buf, bytes_read);
+            TickType_t elapsed_ms =
+                (xTaskGetTickCount() - s_wake_ticks) * portTICK_PERIOD_MS;
+
+            // Do not send audio until greeting has arrived and played.
+            // Concurrent writes + large incoming binary frame fills the TCP
+            // send buffer → transport_poll_write(0) → disconnect.
+            if (elapsed_ms >= AUDIO_STREAM_DELAY_MS) {
+                if (self->send_cb_) {
+                    self->send_cb_((const uint8_t*)buf, bytes_read);
+                }
             }
+
             // RMS for mouth animation
             if (self->rms_cb_) self->rms_cb_(rms);
 
             // VAD: count silent frames, but only after POST_WAKE_GRACE_MS have
             // elapsed since the last wake.  This lets the greeting TTS arrive
             // and play before we decide the user has stopped speaking.
-            TickType_t elapsed_ms =
-                (xTaskGetTickCount() - s_wake_ticks) * portTICK_PERIOD_MS;
             if (elapsed_ms >= POST_WAKE_GRACE_MS) {
                 if (rms < 0.01f) {
                     if (++silence_frames >= VAD_SILENCE_FRAMES) {
