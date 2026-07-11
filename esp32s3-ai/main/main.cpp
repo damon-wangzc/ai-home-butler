@@ -226,8 +226,10 @@ extern "C" void app_main() {
     // Clock + battery task
     xTaskCreate(clock_task, "clock", 2048, nullptr, 2, nullptr);
 
-    // Touch polling task — tap screen to trigger wake
-    xTaskCreate(touch_task, "touch", 2048, nullptr, 3, nullptr);
+    // Touch polling task — tap screen to trigger wake.
+    // 4096 bytes needed: gpio_config + gpio_install_isr_service + gpio_isr_handler_add
+    // consume > 2048 bytes during task startup even though the steady-state loop is tiny.
+    xTaskCreate(touch_task, "touch", 4096, nullptr, 3, nullptr);
 
     // LVGL task (core 0)
     xTaskCreatePinnedToCore(UIManager::lvgl_task, "lvgl", 8192,
