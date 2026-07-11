@@ -116,9 +116,19 @@ void AudioPipeline::mic_task(void* arg) {
 
     int silence_frames = 0;
 
-    // TODO: initialise ESP-SR AFE + wake word handle here.
-    // Reference: esp-sr component, esp_afe_sr_iface_t + esp_wn_iface_t.
-    // For now the loop just reads audio and does VAD by RMS threshold.
+    // ── PHASE 6: ESP-SR wake word (NOT YET IMPLEMENTED) ──────────────────────
+    // To add "Hi Lexin" voice wake:
+    //   1. Add esp-sr to idf_component.yml
+    //   2. const esp_afe_sr_iface_t* afe_handle = &ESP_AFE_SR_HANDLE;
+    //      esp_afe_sr_cfg_t afe_cfg = AFE_CONFIG_DEFAULT();
+    //      esp_afe_data_t* afe = afe_handle->create_from_config(&afe_cfg);
+    //   3. const esp_wn_iface_t* wn = &WAKENET_MODEL;  // wn9_hilexin
+    //      model_iface_data_t* wn_model = wn->create(NULL, DET_MODE_90);
+    //   4. In loop: afe_handle->feed(afe, buf);
+    //              esp_afe_sr_data_t* res = afe_handle->fetch(afe);
+    //              if (wn->detect(wn_model, res->data) > 0) on_wake_word();
+    // Until then, use touch-tap (touch_task in main.cpp) to trigger wake.
+    // ─────────────────────────────────────────────────────────────────────────
 
     while (true) {
         size_t bytes_read = 0;
@@ -145,7 +155,6 @@ void AudioPipeline::mic_task(void* arg) {
                 silence_frames = 0;
             }
         }
-        // TODO: feed buf to ESP-SR AFE; call on_wake_word() on detection
     }
 }
 

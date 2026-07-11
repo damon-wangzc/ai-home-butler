@@ -92,11 +92,35 @@ static void wifi_init() {
 }
 
 // ── Touch callback (tap → wake) ───────────────────────────────────────────────
-// Called when touch tap is detected (wire to touch polling task in Phase 5b)
-__attribute__((unused))
 static void touch_tap_cb() {
     AudioPipeline::instance().trigger_wake();
     OrbMqttClient::instance().publish_touch();
+}
+
+// Poll CST816 touch controller at 50ms intervals.
+// Debounce: minimum TOUCH_DEBOUNCE_MS between wake triggers.
+#define TOUCH_DEBOUNCE_MS 500
+
+static void touch_task(void*) {
+    TickType_t last_tap = 0;
+    uint16_t tx = 0, ty = 0, strength = 0;
+    uint8_t  point_num = 0;
+
+    while (true) {
+        if (tp) {
+            esp_lcd_touch_read_data(tp);
+            bool hit = esp_lcd_touch_get_coordinates(
+                tp, &tx, &ty, &strength, &point_num, 1);
+            if (hit && point_num > 0) {
+                TickType_t now = xTaskGetTickCount();
+                if ((now - last_tap) * portTICK_PERIOD_MS >= TOUCH_DEBOUNCE_MS) {
+                    last_tap = now;
+                    touch_tap_cb();
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 }
 
 // ── Clock task (1Hz) ─────────────────────────────────────────────────────────
@@ -183,6 +207,9 @@ extern "C" void app_main() {
 
     // Clock + battery task
     xTaskCreate(clock_task, "clock", 2048, nullptr, 2, nullptr);
+
+    // Touch polling task — tap screen to trigger wake
+    xTaskCreate(touch_task, "touch", 2048, nullptr, 3, nullptr);
 
     // LVGL task (core 0)
     xTaskCreatePinnedToCore(UIManager::lvgl_task, "lvgl", 8192,
