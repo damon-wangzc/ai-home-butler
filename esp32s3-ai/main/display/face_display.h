@@ -39,7 +39,7 @@
 #define TOUCH_HOLD_TICKS  5
 
 struct EyeWidgets {
-    lv_obj_t* clip  = nullptr;   // overflow-hidden container sized to eye_w×eye_h
+    lv_obj_t* clip  = nullptr;   // container — LVGL 8.3 clips children by default
     lv_obj_t* img   = nullptr;   // lv_img: alpha-8 eye bitmap, recoloured white
     lv_obj_t* pupil = nullptr;   // dark rounded oval
     lv_obj_t* lid   = nullptr;   // black top-overlay, animated for blink

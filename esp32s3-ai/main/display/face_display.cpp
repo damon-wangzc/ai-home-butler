@@ -148,9 +148,9 @@ void FaceDisplay::tick_100ms() {
 // ── Widget builders ───────────────────────────────────────────────────────────
 
 void FaceDisplay::build_eye(lv_obj_t* parent, EyeWidgets& w) {
-    // Clip container — children outside its bounds are hidden
+    // Clip container — LVGL 8.3 clips children to parent bounds by default
+    // (LV_OBJ_FLAG_OVERFLOW_VISIBLE would need to be set to disable clipping)
     w.clip = lv_obj_create(parent);
-    lv_obj_add_flag(w.clip, LV_OBJ_FLAG_OVERFLOW_HIDDEN);
     lv_obj_set_style_bg_opa(w.clip, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(w.clip, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(w.clip, 0, LV_PART_MAIN);
