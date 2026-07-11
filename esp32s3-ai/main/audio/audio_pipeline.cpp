@@ -53,6 +53,13 @@ static uint8_t*       s_play_queue_storage = nullptr;  // allocated in PSRAM
 
 static volatile TickType_t s_wake_ticks = 0;  // set on every wake event
 
+// Speaker-activity tracking: mic streaming is gated while the speaker is
+// playing AND for ECHO_DECAY_MS after it stops, so the greeting echo does
+// not enter the STT buffer (the mic picks up the speaker on-board).
+#define ECHO_DECAY_MS       400
+static volatile bool       s_speaker_active     = false;
+static volatile TickType_t s_speaker_done_ticks = 0;
+
 // VAD silence counter (units of 20ms frames)
 static const int VAD_SILENCE_FRAMES = AUDIO_SAMPLE_RATE / 1000
                                       * 700 / AUDIO_DMA_BUF_SAMPLES;
@@ -190,10 +197,14 @@ void AudioPipeline::mic_task(void* arg) {
             TickType_t elapsed_ms =
                 (xTaskGetTickCount() - s_wake_ticks) * portTICK_PERIOD_MS;
 
-            // Do not send audio until greeting has arrived and played.
-            // Concurrent writes + large incoming binary frame fills the TCP
-            // send buffer → transport_poll_write(0) → disconnect.
-            if (elapsed_ms >= AUDIO_STREAM_DELAY_MS) {
+            // Do not send audio while speaker is playing or within ECHO_DECAY_MS
+            // after it stops.  The mic is on the same board and picks up the
+            // greeting TTS — without this gate, the echo of "What can I do for
+            // you?" reaches STT and transcribes as 'You' (acoustic feedback).
+            TickType_t echo_ms =
+                (xTaskGetTickCount() - s_speaker_done_ticks) * portTICK_PERIOD_MS;
+            bool speaker_quiet = !s_speaker_active && (echo_ms >= ECHO_DECAY_MS);
+            if (elapsed_ms >= AUDIO_STREAM_DELAY_MS && speaker_quiet) {
                 if (self->send_cb_) {
                     self->send_cb_((const uint8_t*)buf, bytes_read);
                 }
@@ -229,6 +240,7 @@ void AudioPipeline::spk_task(void* arg) {
 
     while (true) {
         if (xQueueReceive(s_play_queue, &chunk, pdMS_TO_TICKS(50)) == pdTRUE) {
+            s_speaker_active = true;
             // Software volume: scale each 16-bit sample to SPEAKER_VOLUME_PCT %.
             // The PCM5101 DAC has no volume register.
             int16_t* samples = (int16_t*)chunk.data;
@@ -246,6 +258,10 @@ void AudioPipeline::spk_task(void* arg) {
                                               chunk.len / sizeof(int16_t));
                 self->rms_cb_(rms);
             }
+        } else if (s_speaker_active) {
+            // Play queue just drained — mark speaker idle for echo-gate logic
+            s_speaker_active     = false;
+            s_speaker_done_ticks = xTaskGetTickCount();
         }
     }
 }
