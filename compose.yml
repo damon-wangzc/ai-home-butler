@@ -159,6 +159,11 @@ services:
       WHISPER_DEVICE: "${WHISPER_DEVICE:-cpu}"
       WHISPER_COMPUTE: "${WHISPER_COMPUTE:-int8}"
       HF_HOME: "/data/whisper-cache"
+      # Hide all CUDA devices from CTranslate2 when running CPU-only.
+      # Even though the base image is nvidia/cuda, CTranslate2 must not try
+      # to use CUDA on machines without cuBLAS (libcublas.so.12 not in runtime image).
+      # On GPU machines: set CUDA_VISIBLE_DEVICES=0 and WHISPER_DEVICE=cuda in .env.
+      CUDA_VISIBLE_DEVICES: "${CUDA_VISIBLE_DEVICES:-}"
     devices:
       - nvidia.com/gpu=all   # remove for CPU-only fallback; set WHISPER_DEVICE=cpu in .env
     volumes:
