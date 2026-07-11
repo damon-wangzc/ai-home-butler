@@ -14,8 +14,8 @@
 #include <esp_lcd_panel_io.h>
 
 extern "C" {
-#include "CST816.h"   // declares: esp_lcd_touch_handle_t tp
-                      // includes: esp_lcd_touch.h → esp_lcd_touch_get_xy()
+#include "esp_lcd_touch.h"  // esp_lcd_touch_read_data(), esp_lcd_touch_get_coordinates()
+#include "CST816.h"         // declares: esp_lcd_touch_handle_t tp
 }
 
 static const char* TAG = "UIManager";
@@ -116,7 +116,7 @@ void UIManager::lvgl_task(void* arg) {
             esp_lcd_touch_read_data(tp);
             uint16_t tx = 0, ty = 0;
             uint8_t  point_num = 0;
-            if (esp_lcd_touch_get_xy(tp, &tx, &ty, nullptr, &point_num, 1)
+            if (esp_lcd_touch_get_coordinates(tp, &tx, &ty, nullptr, &point_num, 1)
                     && point_num > 0) {
                 self->on_touch((int16_t)tx, (int16_t)ty);
             }
