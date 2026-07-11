@@ -85,6 +85,12 @@ static void wifi_init() {
     strncpy((char*)wcfg.sta.password, CONFIG_AI_ORB_WIFI_PASSWORD, 63);
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+    // Disable power-save modem sleep.  The AP beacon interval is 102 ms; with
+    // the default WIFI_PS_MIN_MODEM the radio sleeps between beacons and TCP
+    // writes block until the next wake-up.  Our send_audio timeout (50 ms) is
+    // shorter than one beacon interval, so writes fail randomly and the
+    // WebSocket client tears down the connection.
+    esp_wifi_set_ps(WIFI_PS_NONE);
     esp_wifi_start();
     esp_wifi_connect();
     // Wait for connection (10s timeout)

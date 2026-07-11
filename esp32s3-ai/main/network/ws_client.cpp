@@ -34,9 +34,11 @@ void WSClient::connect(const char* host, uint16_t port) {
 
 bool WSClient::send_audio(const uint8_t* data, size_t len) {
     if (!connected_ || !ws_handle_) return false;
+    // Timeout 300 ms: must exceed the WiFi beacon interval (≤102 ms) so that
+    // the write poll succeeds even if the radio just entered a sleep cycle.
     int ret = esp_websocket_client_send_bin(
         (esp_websocket_client_handle_t)ws_handle_,
-        (const char*)data, (int)len, pdMS_TO_TICKS(50));
+        (const char*)data, (int)len, pdMS_TO_TICKS(300));
     return ret == ESP_OK;
 }
 
