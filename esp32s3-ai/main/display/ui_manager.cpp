@@ -7,6 +7,10 @@
 #include <cstdio>
 #include <cstring>
 
+extern "C" {
+#include "CST816.h"   // esp_lcd_touch_handle_t tp, esp_lcd_touch_read_data/get_xy
+}
+
 static const char* TAG = "UIManager";
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -81,17 +85,36 @@ void UIManager::on_battery_level(int percent) {
     lv_label_set_text(bat_label_, buf);
 }
 
+void UIManager::on_touch(int16_t tx, int16_t ty) {
+    face_.on_touch(tx, ty);
+}
+
 // ── LVGL task ─────────────────────────────────────────────────────────────────
 
 void UIManager::lvgl_task(void* arg) {
     UIManager* self = static_cast<UIManager*>(arg);
-    (void)self;
 
-    uint32_t tick_ms = 0;
+    uint32_t tick_ms    = 0;
+    uint32_t touch_poll = 0;          // poll touch every ~16 ms (~60 Hz)
+
     while (true) {
         lv_task_handler();
         vTaskDelay(pdMS_TO_TICKS(LVGL_REFRESH_MS));
-        tick_ms += LVGL_REFRESH_MS;
+        tick_ms    += LVGL_REFRESH_MS;
+        touch_poll += LVGL_REFRESH_MS;
+
+        // Poll CST816 touch controller
+        if (touch_poll >= 16 && tp != NULL) {
+            touch_poll = 0;
+            esp_lcd_touch_read_data(tp);
+            uint16_t tx = 0, ty = 0;
+            uint8_t  point_num = 0;
+            if (esp_lcd_touch_get_xy(tp, &tx, &ty, nullptr, &point_num, 1)
+                    && point_num > 0) {
+                self->on_touch((int16_t)tx, (int16_t)ty);
+            }
+        }
+
         if (tick_ms >= 100) {
             self->face_.tick_100ms();
             tick_ms = 0;

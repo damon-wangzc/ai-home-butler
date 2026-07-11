@@ -3,6 +3,7 @@ idf_component_register(
         "main.cpp"
         "display/face_display.cpp"
         "display/ui_manager.cpp"
+        "display/stackchan_assets.c"
         "audio/audio_pipeline.cpp"
         "network/ws_client.cpp"
         "network/mqtt_client.cpp"
@@ -22,6 +23,8 @@ idf_component_register(
         "hal"
         "display"
         "audio"
+        # Bitmap + preset assets from the design reference (pure-C headers)
+        "../../.github/reference/expressions"
         # network/ intentionally omitted: avoids shadowing IDF's mqtt_client.h
         # (main.cpp uses "network/ws_client.h" prefix; network/ files use same-dir includes)
         # Hardware driver include dirs

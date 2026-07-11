@@ -44,6 +44,10 @@ public:
     // Called from battery ADC read (0–100%)
     void on_battery_level(int percent);
 
+    // Called from the LVGL task when the CST816 touch controller reports a tap.
+    // tx/ty are raw display coordinates (0..359).
+    void on_touch(int16_t tx, int16_t ty);
+
     // LVGL task — call from a dedicated FreeRTOS task
     static void lvgl_task(void* arg);
 
