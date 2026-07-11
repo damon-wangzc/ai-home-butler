@@ -52,11 +52,17 @@ services:
     # Publishes:  butler/orb/state, butler/reminders/due, butler/ugv/navigate
     # Phase 5: ESP32-S3 orb connects directly on port 1883 from the LAN
     image: eclipse-mosquitto:2
-    user: "0:0"           # run as root in dev — avoids rootless Podman UID-1883 permission issue
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto:/mosquitto/config:ro,z
+      # Mount the whole config DIRECTORY, not a single file.
+      # A single-file bind mount whose host path is missing at `up` time is
+      # silently created by Podman as an empty DIRECTORY, so mosquitto then
+      # tries to open a directory as its config → "Unable to open config file".
+      # Mounting the directory (which is committed to git) avoids that trap.
+      - ./mosquitto/config:/mosquitto/config:ro,z
+      - ./mosquitto/log:/mosquitto/log:z
       - ./data/mosquitto:/mosquitto/data:z
     restart: unless-stopped
 
