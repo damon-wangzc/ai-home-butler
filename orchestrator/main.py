@@ -317,8 +317,10 @@ async def audio(ws: WebSocket):
     await ws.accept()
     user_id = _active_user_id
     pcm_buffer: bytearray = bytearray()
-    _SILENCE_TIMEOUT = 1.5   # seconds — fallback end-of-utterance detector
-    _MIN_AUDIO_BYTES = 3200  # 100 ms @ 16kHz/16-bit/mono — skip noise bursts
+    _SILENCE_TIMEOUT   = 1.5    # seconds — fallback end-of-utterance detector
+    _MIN_AUDIO_BYTES   = 16000  # 500 ms @ 16kHz/16-bit/mono — reject silence bursts
+    _GREETING_COOLDOWN = 5.0    # seconds — suppress duplicate wakes / double-greetings
+    _last_greeting_ts  = 0.0    # monotonic timestamp of last greeting sent
 
     async def _flush(client: httpx.AsyncClient) -> None:
         """STT → LLM → TTS on the accumulated PCM buffer, then clear it."""
@@ -395,6 +397,10 @@ async def audio(ws: WebSocket):
                     # Use silence timeout only when we have buffered audio
                     timeout = _SILENCE_TIMEOUT if pcm_buffer else None
                     data = await asyncio.wait_for(ws.receive(), timeout=timeout)
+                    # Handle clean disconnect (returns a dict, not an exception)
+                    if data.get("type") == "websocket.disconnect":
+                        logger.info("audio WebSocket disconnected user_id=%s", user_id)
+                        return
                 except asyncio.TimeoutError:
                     # Fallback: no vad_end arrived but buffer has speech audio
                     await _flush(client)
@@ -405,20 +411,32 @@ async def audio(ws: WebSocket):
                         cfg = json.loads(data["text"])
                         msg_type = cfg.get("type", "")
                         if msg_type == "wake":
-                            # ESP32 just woke — play greeting, then wait for speech
+                            # ESP32 just woke — play greeting, then wait for speech.
+                            # Rate-limit: ignore duplicate wakes within the cooldown
+                            # window to prevent double-greetings (noise) caused by
+                            # touch bounce or the user tapping mid-session.
                             uid = (cfg.get("user_id") or cfg.get("user", "")).strip()
                             if uid:
                                 user_id = uid
-                            try:
-                                tts_resp = await client.post(
-                                    f"{TTS_URL}/tts",
-                                    json={"text": "What can I do for you?"},
-                                )
-                                tts_resp.raise_for_status()
-                                await ws.send_bytes(tts_resp.content)
-                                logger.info("greeting_sent user_id=%s", user_id)
-                            except Exception as exc:
-                                logger.warning("greeting_error: %s", exc)
+                            # Always discard stale audio from the previous session
+                            pcm_buffer.clear()
+                            import time as _time
+                            _now = _time.monotonic()
+                            if _now - _last_greeting_ts < _GREETING_COOLDOWN:
+                                logger.debug("wake_cooldown_skip user_id=%s elapsed=%.1fs",
+                                             user_id, _now - _last_greeting_ts)
+                            else:
+                                _last_greeting_ts = _now
+                                try:
+                                    tts_resp = await client.post(
+                                        f"{TTS_URL}/tts",
+                                        json={"text": "What can I do for you?"},
+                                    )
+                                    tts_resp.raise_for_status()
+                                    await ws.send_bytes(tts_resp.content)
+                                    logger.info("greeting_sent user_id=%s", user_id)
+                                except Exception as exc:
+                                    logger.warning("greeting_error: %s", exc)
                         elif msg_type == "vad_end":
                             # ESP32 signalled end of utterance — process immediately
                             await _flush(client)

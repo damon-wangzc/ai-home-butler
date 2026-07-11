@@ -112,7 +112,11 @@ static void touch_tap_cb() {
 //   E lcd_panel.io.i2c: i2c transaction failed
 //   ***ERROR*** A stack overflow in task touch has been detected.
 
-#define TOUCH_DEBOUNCE_MS 500
+// Full wake cycle takes ~5 s (2 s audio delay + 3.5 s grace + VAD).  A short
+// debounce lets the user re-trigger mid-session, causing double greetings
+// (noise) and empty STT.  2000 ms covers accidental multi-tap; the user can
+// tap again once the response is playing.
+#define TOUCH_DEBOUNCE_MS 2000
 
 static volatile bool s_touch_pending = false;
 
