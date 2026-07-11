@@ -34,6 +34,18 @@ static QueueHandle_t  s_play_queue         = nullptr;
 static StaticQueue_t  s_play_queue_struct;
 static uint8_t*       s_play_queue_storage = nullptr;  // allocated in PSRAM
 
+// Post-wake grace period: VAD silence cannot fire until this many ms after
+// the last wake event.  Allows the greeting TTS (~500ms to arrive, ~1.5s to
+// play) to complete before the user speaks, without the device stopping
+// listening prematurely.
+#define POST_WAKE_GRACE_MS  3500
+
+// Speaker volume (0–100 %).  Applied in software before writing to I2S.
+// The PCM5101 has no volume register, so we scale the 16-bit samples.
+#define SPEAKER_VOLUME_PCT  30
+
+static volatile TickType_t s_wake_ticks = 0;  // set on every wake event
+
 // VAD silence counter (units of 20ms frames)
 static const int VAD_SILENCE_FRAMES = AUDIO_SAMPLE_RATE / 1000
                                       * 700 / AUDIO_DMA_BUF_SAMPLES;
@@ -175,14 +187,22 @@ void AudioPipeline::mic_task(void* arg) {
             // RMS for mouth animation
             if (self->rms_cb_) self->rms_cb_(rms);
 
-            // VAD: count silent frames
-            if (rms < 0.01f) {
-                if (++silence_frames >= VAD_SILENCE_FRAMES) {
-                    self->on_vad_silence();
+            // VAD: count silent frames, but only after POST_WAKE_GRACE_MS have
+            // elapsed since the last wake.  This lets the greeting TTS arrive
+            // and play before we decide the user has stopped speaking.
+            TickType_t elapsed_ms =
+                (xTaskGetTickCount() - s_wake_ticks) * portTICK_PERIOD_MS;
+            if (elapsed_ms >= POST_WAKE_GRACE_MS) {
+                if (rms < 0.01f) {
+                    if (++silence_frames >= VAD_SILENCE_FRAMES) {
+                        self->on_vad_silence();
+                        silence_frames = 0;
+                    }
+                } else {
                     silence_frames = 0;
                 }
             } else {
-                silence_frames = 0;
+                silence_frames = 0;  // reset during grace period
             }
         }
     }
@@ -196,6 +216,14 @@ void AudioPipeline::spk_task(void* arg) {
 
     while (true) {
         if (xQueueReceive(s_play_queue, &chunk, pdMS_TO_TICKS(50)) == pdTRUE) {
+            // Software volume: scale each 16-bit sample to SPEAKER_VOLUME_PCT %.
+            // The PCM5101 DAC has no volume register.
+            int16_t* samples = (int16_t*)chunk.data;
+            int      count   = (int)(chunk.len / sizeof(int16_t));
+            for (int i = 0; i < count; i++) {
+                samples[i] = (int16_t)((int32_t)samples[i] * SPEAKER_VOLUME_PCT / 100);
+            }
+
             size_t written = 0;
             i2s_channel_write(s_tx_chan, chunk.data, chunk.len,
                               &written, pdMS_TO_TICKS(100));
@@ -213,7 +241,8 @@ void AudioPipeline::spk_task(void* arg) {
 
 void AudioPipeline::on_wake_word() {
     if (streaming_) return;
-    streaming_ = true;
+    streaming_    = true;
+    s_wake_ticks  = xTaskGetTickCount();
     ESP_LOGI(TAG, "wake word detected → LISTENING");
     if (state_cb_) state_cb_(DEVICE_STATE_LISTENING);
 }
