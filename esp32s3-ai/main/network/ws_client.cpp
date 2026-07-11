@@ -39,7 +39,12 @@ bool WSClient::send_audio(const uint8_t* data, size_t len) {
     int ret = esp_websocket_client_send_bin(
         (esp_websocket_client_handle_t)ws_handle_,
         (const char*)data, (int)len, pdMS_TO_TICKS(300));
-    return ret == ESP_OK;
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "send_audio failed ret=%d — reconnecting", ret);
+        on_disconnected();
+        return false;
+    }
+    return true;
 }
 
 // ── Send wake notification ───────────────────────────────────────────────────────
@@ -49,9 +54,14 @@ void WSClient::send_wake(const char* user_id) {
     char buf[80];
     snprintf(buf, sizeof(buf), "{\"type\":\"wake\",\"user_id\":\"%s\"}",
              user_id ? user_id : "default");
-    esp_websocket_client_send_text(
+    int ret = esp_websocket_client_send_text(
         (esp_websocket_client_handle_t)ws_handle_,
         buf, (int)strlen(buf), pdMS_TO_TICKS(200));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "send_wake failed ret=%d — reconnecting", ret);
+        on_disconnected();
+        return;
+    }
     ESP_LOGI(TAG, "wake sent user_id=%s", user_id);
 }
 
@@ -60,9 +70,13 @@ void WSClient::send_wake(const char* user_id) {
 void WSClient::send_vad_end() {
     if (!connected_ || !ws_handle_) return;
     static const char* msg = "{\"type\":\"vad_end\"}";
-    esp_websocket_client_send_text(
+    int ret = esp_websocket_client_send_text(
         (esp_websocket_client_handle_t)ws_handle_,
         msg, (int)strlen(msg), pdMS_TO_TICKS(200));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "send_vad_end failed ret=%d — reconnecting", ret);
+        on_disconnected();
+    }
     ESP_LOGD(TAG, "vad_end sent");
 }
 
