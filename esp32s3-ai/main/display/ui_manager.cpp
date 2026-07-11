@@ -7,8 +7,15 @@
 #include <cstdio>
 #include <cstring>
 
+// esp_lcd_panel_io.h MUST be included here (outside extern "C") to avoid the
+// conflicting-declaration error in IDF 5.5's esp_lcd_io_i2c.h.
+// CST816.h → ST77916.h pulls it in; pre-including outside the C-linkage block
+// lets the include guard suppress the re-entry, same pattern as main.cpp.
+#include <esp_lcd_panel_io.h>
+
 extern "C" {
-#include "CST816.h"   // esp_lcd_touch_handle_t tp, esp_lcd_touch_read_data/get_xy
+#include "CST816.h"   // declares: esp_lcd_touch_handle_t tp
+                      // includes: esp_lcd_touch.h → esp_lcd_touch_get_xy()
 }
 
 static const char* TAG = "UIManager";
