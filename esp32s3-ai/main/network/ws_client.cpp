@@ -40,6 +40,19 @@ bool WSClient::send_audio(const uint8_t* data, size_t len) {
     return ret == ESP_OK;
 }
 
+// ── Send wake notification ───────────────────────────────────────────────────────
+
+void WSClient::send_wake(const char* user_id) {
+    if (!connected_ || !ws_handle_) return;
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"type\":\"wake\",\"user_id\":\"%s\"}",
+             user_id ? user_id : "default");
+    esp_websocket_client_send_text(
+        (esp_websocket_client_handle_t)ws_handle_,
+        buf, (int)strlen(buf), pdMS_TO_TICKS(200));
+    ESP_LOGI(TAG, "wake sent user_id=%s", user_id);
+}
+
 // ── Send VAD end ──────────────────────────────────────────────────────────────
 
 void WSClient::send_vad_end() {

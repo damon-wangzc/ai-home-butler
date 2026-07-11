@@ -42,6 +42,9 @@ public:
     // Send raw PCM frame (called from audio pipeline mic task)
     bool send_audio(const uint8_t* data, size_t len);
 
+    // Send wake notification to orchestrator (triggers greeting TTS)
+    void send_wake(const char* user_id);
+
     // Notify server that the utterance is complete (called after VAD silence)
     void send_vad_end();
 

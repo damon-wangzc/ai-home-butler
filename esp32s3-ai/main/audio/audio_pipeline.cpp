@@ -7,6 +7,7 @@
 #include <freertos/queue.h>
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
+#include <esp_heap_caps.h>
 #include <cmath>
 #include <cstring>
 
@@ -16,8 +17,12 @@ static const char* TAG = "AudioPipeline";
 static i2s_chan_handle_t s_tx_chan = nullptr;  // speaker
 static i2s_chan_handle_t s_rx_chan = nullptr;  // mic
 
-// Playback queue: chunks of PCM data
-#define PLAY_QUEUE_DEPTH 8
+// Playback queue: chunks of PCM data.
+// Stored in PSRAM (8 MB available) so play_pcm() can push the full TTS WAV
+// without blocking — a 200 KB response needs ~312 slots.  Non-blocking pushes
+// mean the WebSocket receive callback returns immediately, preventing the
+// send-audio timeout that caused disconnects.
+#define PLAY_QUEUE_DEPTH 320          // 320 × 640 B = 200 KB — ~6 s of TTS
 #define PLAY_CHUNK_BYTES (AUDIO_DMA_BUF_SAMPLES * 2)  // 16-bit samples
 
 typedef struct {
@@ -25,7 +30,9 @@ typedef struct {
     size_t  len;
 } play_chunk_t;
 
-static QueueHandle_t s_play_queue = nullptr;
+static QueueHandle_t  s_play_queue         = nullptr;
+static StaticQueue_t  s_play_queue_struct;
+static uint8_t*       s_play_queue_storage = nullptr;  // allocated in PSRAM
 
 // VAD silence counter (units of 20ms frames)
 static const int VAD_SILENCE_FRAMES = AUDIO_SAMPLE_RATE / 1000
@@ -34,7 +41,19 @@ static const int VAD_SILENCE_FRAMES = AUDIO_SAMPLE_RATE / 1000
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 void AudioPipeline::init() {
-    s_play_queue = xQueueCreate(PLAY_QUEUE_DEPTH, sizeof(play_chunk_t));
+    // Allocate play queue storage in PSRAM so the queue can hold a full TTS
+    // response without blocking the WebSocket receive callback.
+    s_play_queue_storage = (uint8_t*)heap_caps_malloc(
+        PLAY_QUEUE_DEPTH * sizeof(play_chunk_t),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_play_queue_storage) {
+        s_play_queue = xQueueCreateStatic(
+            PLAY_QUEUE_DEPTH, sizeof(play_chunk_t),
+            s_play_queue_storage, &s_play_queue_struct);
+    } else {
+        ESP_LOGW(TAG, "PSRAM alloc failed — falling back to small internal queue");
+        s_play_queue = xQueueCreate(8, sizeof(play_chunk_t));
+    }
 
     // Speaker I2S (standard simplex TX)
     i2s_chan_config_t tx_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_SPEAKER_PORT,
@@ -85,13 +104,24 @@ void AudioPipeline::init() {
 
 void AudioPipeline::play_pcm(const uint8_t* data, size_t len) {
     if (!data || len == 0) return;
+
+    // Strip WAV header (44 bytes) — TTS returns WAV but the I2S speaker
+    // needs raw 16-bit PCM.  Check the RIFF magic bytes.
     size_t offset = 0;
+    if (len > 44 &&
+        data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F') {
+        offset = 44;
+    }
+
     while (offset < len) {
         play_chunk_t chunk;
         size_t chunk_len = std::min((size_t)PLAY_CHUNK_BYTES, len - offset);
         memcpy(chunk.data, data + offset, chunk_len);
         chunk.len = chunk_len;
-        xQueueSend(s_play_queue, &chunk, pdMS_TO_TICKS(20));
+        // Non-blocking push: the PSRAM queue holds the full TTS response, so
+        // this should never drop.  If it does (very long response), drop the
+        // chunk rather than blocking the WebSocket callback for seconds.
+        xQueueSend(s_play_queue, &chunk, 0);
         offset += chunk_len;
     }
 }

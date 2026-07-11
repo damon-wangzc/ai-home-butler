@@ -404,7 +404,22 @@ async def audio(ws: WebSocket):
                     try:
                         cfg = json.loads(data["text"])
                         msg_type = cfg.get("type", "")
-                        if msg_type == "vad_end":
+                        if msg_type == "wake":
+                            # ESP32 just woke — play greeting, then wait for speech
+                            uid = (cfg.get("user_id") or cfg.get("user", "")).strip()
+                            if uid:
+                                user_id = uid
+                            try:
+                                tts_resp = await client.post(
+                                    f"{TTS_URL}/tts",
+                                    json={"text": "What can I do for you?"},
+                                )
+                                tts_resp.raise_for_status()
+                                await ws.send_bytes(tts_resp.content)
+                                logger.info("greeting_sent user_id=%s", user_id)
+                            except Exception as exc:
+                                logger.warning("greeting_error: %s", exc)
+                        elif msg_type == "vad_end":
                             # ESP32 signalled end of utterance — process immediately
                             await _flush(client)
                         else:
