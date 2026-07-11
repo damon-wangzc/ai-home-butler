@@ -52,7 +52,18 @@ services:
     # Publishes:  butler/orb/state, butler/reminders/due, butler/ugv/navigate
     # Phase 5: ESP32-S3 orb connects directly on port 1883 from the LAN
     image: eclipse-mosquitto:2
-    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    # Fix bind-mount ownership before mosquitto drops privileges to the
+    # `mosquitto` user (uid 1883). Host dirs are owned by your login user, so
+    # without this the broker can't write /mosquitto/log/mosquitto.log or the
+    # persistence db. Runs as root (rootful/sudo podman), chowns the writable
+    # dirs, then execs mosquitto. Config stays read-only.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /mosquitto/log /mosquitto/data
+        chown -R mosquitto:mosquitto /mosquitto/log /mosquitto/data || true
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "1883:1883"
     volumes:
