@@ -300,87 +300,129 @@ async def ask(req: AskRequest):
 async def audio(ws: WebSocket):
     """WebSocket audio endpoint — Phase 3/5.
 
-    Client sends raw PCM or WAV bytes → STT → ask → TTS → server sends WAV bytes back.
-    Server also sends JSON text frames to drive the ESP32-S3 orb face:
-      {"type":"state","state":"thinking"}
-      {"type":"state","state":"speaking","text":"..."}
-      {"type":"end"}
-    First message may optionally be a JSON text frame {"user_id": "...", "source": "..."}.
-    Subsequent messages are binary audio frames (raw PCM 16kHz/16-bit/mono, or WAV).
+    Protocol:
+      ESP32 → server : binary PCM frames (16-bit mono 16kHz) while speaking
+      ESP32 → server : JSON {"type":"vad_end"} after VAD silence (end of utterance)
+      server → ESP32 : JSON state frames ({"type":"state","state":"thinking"} etc.)
+      server → ESP32 : binary WAV bytes (TTS response)
+      server → ESP32 : JSON {"type":"end"} after TTS sent
+
+    The server buffers ALL incoming PCM frames and processes them only when:
+      a) a {"type":"vad_end"} frame arrives (preferred — low latency), OR
+      b) no new PCM frame arrives for _SILENCE_TIMEOUT seconds (fallback).
+
+    All STT/TTS/LLM errors are caught and logged; the WebSocket is never
+    closed due to a backend error.
     """
     await ws.accept()
     user_id = _active_user_id
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            while True:
-                data = await ws.receive()
+    pcm_buffer: bytearray = bytearray()
+    _SILENCE_TIMEOUT = 1.5   # seconds — fallback end-of-utterance detector
+    _MIN_AUDIO_BYTES = 3200  # 100 ms @ 16kHz/16-bit/mono — skip noise bursts
 
-                # Allow an initial JSON config frame
+    async def _flush(client: httpx.AsyncClient) -> None:
+        """STT → LLM → TTS on the accumulated PCM buffer, then clear it."""
+        nonlocal user_id
+        buf = bytes(pcm_buffer)
+        pcm_buffer.clear()
+        if len(buf) < _MIN_AUDIO_BYTES:
+            logger.debug("audio_flush_skip len=%d (too short)", len(buf))
+            return
+
+        with suppress(Exception):
+            await ws.send_text(json.dumps({"type": "state", "state": "thinking"}))
+        await _publish_orb_state("thinking")
+
+        # STT
+        try:
+            stt_resp = await client.post(
+                f"{STT_URL}/stt",
+                files={"audio": ("audio.wav", _ensure_wav(buf), "audio/wav")},
+            )
+            stt_resp.raise_for_status()
+            transcript = stt_resp.json().get("text", "").strip()
+        except Exception as exc:
+            logger.warning("stt_error: %s", exc)
+            await _publish_orb_state("idle")
+            with suppress(Exception):
+                await ws.send_text(json.dumps({"type": "state", "state": "idle"}))
+            return
+
+        logger.info("stt user_id=%s transcript=%r", user_id, transcript)
+        if not transcript:
+            await _publish_orb_state("idle")
+            with suppress(Exception):
+                await ws.send_text(json.dumps({"type": "state", "state": "idle"}))
+            return
+
+        # LLM
+        try:
+            result = await _process_ask(user_id, transcript)
+            response_text = result["response"]
+        except ValueError as exc:
+            response_text = f"Sorry, tool error: {exc}"
+        except Exception as exc:
+            logger.warning("ask_error: %s", exc)
+            await _publish_orb_state("idle")
+            return
+
+        if not response_text.strip():
+            await _publish_orb_state("idle")
+            return
+
+        await _publish_orb_state("speaking", text=response_text)
+        with suppress(Exception):
+            await ws.send_text(json.dumps({
+                "type": "state", "state": "speaking", "text": response_text[:80],
+            }))
+
+        # TTS
+        try:
+            tts_resp = await client.post(f"{TTS_URL}/tts", json={"text": response_text})
+            tts_resp.raise_for_status()
+            await ws.send_bytes(tts_resp.content)
+        except Exception as exc:
+            logger.warning("tts_error: %s", exc)
+
+        with suppress(Exception):
+            await ws.send_text(json.dumps({"type": "end"}))
+        await _publish_orb_state("idle")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            while True:
+                try:
+                    # Use silence timeout only when we have buffered audio
+                    timeout = _SILENCE_TIMEOUT if pcm_buffer else None
+                    data = await asyncio.wait_for(ws.receive(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # Fallback: no vad_end arrived but buffer has speech audio
+                    await _flush(client)
+                    continue
+
                 if "text" in data:
                     try:
                         cfg = json.loads(data["text"])
-                        user_id = cfg.get("user_id", user_id)
-                    except json.JSONDecodeError:
+                        msg_type = cfg.get("type", "")
+                        if msg_type == "vad_end":
+                            # ESP32 signalled end of utterance — process immediately
+                            await _flush(client)
+                        else:
+                            uid = (cfg.get("user_id") or cfg.get("user", "")).strip()
+                            if uid:
+                                user_id = uid
+                    except (json.JSONDecodeError, AttributeError):
                         pass
                     continue
 
                 audio_bytes = data.get("bytes")
-                if not audio_bytes:
-                    continue
-
-                # STT — wrap raw PCM in WAV header if needed (ESP32 orb sends raw PCM)
-                stt_resp = await client.post(
-                    f"{STT_URL}/stt",
-                    files={"audio": ("audio.wav", _ensure_wav(audio_bytes), "audio/wav")},
-                )
-                stt_resp.raise_for_status()
-                transcript = stt_resp.json().get("text", "")
-                logger.info("stt user_id=%s transcript_len=%d", user_id, len(transcript))
-
-                if not transcript.strip():
-                    continue
-
-                # Signal thinking state to orb face (MQTT + WebSocket JSON frame)
-                await _publish_orb_state("thinking")
-                with suppress(Exception):
-                    await ws.send_text(json.dumps({"type": "state", "state": "thinking"}))
-
-                # Ask orchestrator
-                try:
-                    result = await _process_ask(user_id, transcript)
-                except ValueError as exc:
-                    response_text = f"Sorry, tool error: {exc}"
-                else:
-                    response_text = result["response"]
-
-                if not response_text.strip():
-                    await _publish_orb_state("idle")
-                    continue
-
-                # Signal speaking state to orb face
-                await _publish_orb_state("speaking", text=response_text)
-                with suppress(Exception):
-                    await ws.send_text(json.dumps({
-                        "type": "state",
-                        "state": "speaking",
-                        "text": response_text[:80],
-                    }))
-
-                # TTS
-                tts_resp = await client.post(
-                    f"{TTS_URL}/tts",
-                    json={"text": response_text},
-                )
-                tts_resp.raise_for_status()
-                await ws.send_bytes(tts_resp.content)
-
-                # Signal end of response
-                with suppress(Exception):
-                    await ws.send_text(json.dumps({"type": "end"}))
-                await _publish_orb_state("idle")
+                if audio_bytes:
+                    pcm_buffer.extend(audio_bytes)
 
     except WebSocketDisconnect:
         logger.info("audio WebSocket disconnected user_id=%s", user_id)
+    except Exception as exc:
+        logger.error("audio_ws_fatal: %s", exc, exc_info=True)
 
 
 @app.get("/health")

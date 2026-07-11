@@ -204,6 +204,11 @@ extern "C" void app_main() {
     ap.set_state_cb([](device_state_t s) {
         UIManager::instance().on_state_change(s);
         OrbMqttClient::instance().publish_state(s);
+        // Notify orchestrator that the utterance is complete so it can run STT
+        // on the full buffered audio rather than per-frame fragments.
+        if (s == DEVICE_STATE_THINKING) {
+            WSClient::instance().send_vad_end();
+        }
     });
     ap.set_rms_cb([](float rms) {
         UIManager::instance().on_audio_rms(rms);

@@ -42,6 +42,9 @@ public:
     // Send raw PCM frame (called from audio pipeline mic task)
     bool send_audio(const uint8_t* data, size_t len);
 
+    // Notify server that the utterance is complete (called after VAD silence)
+    void send_vad_end();
+
     bool is_connected() const { return connected_; }
 
     void disconnect();

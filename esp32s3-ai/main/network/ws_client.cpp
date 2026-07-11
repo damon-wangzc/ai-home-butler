@@ -14,9 +14,10 @@ void WSClient::connect(const char* host, uint16_t port) {
     snprintf(uri, sizeof(uri), "ws://%s:%u/audio", host, port);
 
     esp_websocket_client_config_t cfg = {};
-    cfg.uri                = uri;
-    cfg.buffer_size        = 8192;
+    cfg.uri                  = uri;
+    cfg.buffer_size          = 8192;
     cfg.reconnect_timeout_ms = 5000;
+    cfg.network_timeout_ms   = 10000;  // suppress "not set" warning
 
     ws_handle_ = esp_websocket_client_init(&cfg);
     esp_websocket_register_events(
@@ -37,6 +38,17 @@ bool WSClient::send_audio(const uint8_t* data, size_t len) {
         (esp_websocket_client_handle_t)ws_handle_,
         (const char*)data, (int)len, pdMS_TO_TICKS(50));
     return ret == ESP_OK;
+}
+
+// ── Send VAD end ──────────────────────────────────────────────────────────────
+
+void WSClient::send_vad_end() {
+    if (!connected_ || !ws_handle_) return;
+    static const char* msg = "{\"type\":\"vad_end\"}";
+    esp_websocket_client_send_text(
+        (esp_websocket_client_handle_t)ws_handle_,
+        msg, (int)strlen(msg), pdMS_TO_TICKS(200));
+    ESP_LOGD(TAG, "vad_end sent");
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
