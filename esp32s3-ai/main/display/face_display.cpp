@@ -8,11 +8,9 @@
 static const char* TAG = "FaceDisplay";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
-static const lv_color_t COLOR_BG     = LV_COLOR_MAKE(0x00, 0x00, 0x00);
+static const lv_color_t COLOR_BG     = LV_COLOR_MAKE(0x12, 0x18, 0x2C);  // dark blue-grey
 static const lv_color_t COLOR_SCLERA = LV_COLOR_MAKE(0xFF, 0xFF, 0xFF);
 static const lv_color_t COLOR_PUPIL  = LV_COLOR_MAKE(0x18, 0x18, 0x2C);
-static const lv_color_t COLOR_BLUSH  = LV_COLOR_MAKE(0xFF, 0x88, 0xAA);
-static const lv_color_t COLOR_MOUTH  = LV_COLOR_MAKE(0xEE, 0x44, 0x44);
 
 // ── Mouth arc rotation offset so that 0° is at the bottom of the arc widget ─
 // LVGL arc: 0° = 3 o'clock, angles go clockwise.
@@ -46,7 +44,6 @@ void FaceDisplay::init(lv_obj_t* screen) {
     build_eye(face, eye_l_);
     build_eye(face, eye_r_);
     build_mouth(face);
-    build_blush(face);
     build_accent_ring(screen);   // on top of everything, on the screen itself
 
     blink_timer_ = lv_timer_create(blink_timer_cb, 3500, this);
@@ -66,7 +63,6 @@ void FaceDisplay::set_state(device_state_t state) {
     apply_eye_preset(eye_r_, false, p);
     refresh_pupil_positions(p);
     apply_mouth_preset(state, p);
-    apply_blush_opacity(state);
 
     // Accent ring
     lv_color_t ac = lv_color_hex(p.accent_color);
@@ -89,13 +85,12 @@ void FaceDisplay::set_state(device_state_t state) {
 void FaceDisplay::set_mouth_rms(float rms) {
     if (current_state_ != DEVICE_STATE_SPEAKING) return;
     rms = std::max(0.0f, std::min(1.0f, rms));
-    const face_preset_t& p = g_face_presets[(int)DEVICE_STATE_SPEAKING];
-    // Map RMS 0..1 → mouth arc span 60°..180° centred at bottom (270°)
-    int span  = 60 + (int)(rms * 120.0f);
-    int start = 270 - span / 2;
-    int end   = 270 + span / 2;
-    lv_arc_set_angles(mouth_arc_, (uint16_t)start, (uint16_t)end);
-    lv_obj_set_style_arc_width(mouth_arc_, p.mouth_height / 2, LV_PART_INDICATOR);
+    // Arc centred at 90° (bottom of widget circle) = mouth opens/closes downward
+    // half-span 10° (closed) → 55° (wide open)
+    int half_span = 10 + (int)(rms * 45.0f);
+    lv_arc_set_angles(mouth_arc_, (uint16_t)(90 - half_span), (uint16_t)(90 + half_span));
+    int width = 4 + (int)(rms * 12.0f);
+    lv_obj_set_style_arc_width(mouth_arc_, width, LV_PART_INDICATOR);
 }
 
 void FaceDisplay::set_accent_color(lv_color_t c) {
@@ -148,76 +143,51 @@ void FaceDisplay::tick_100ms() {
 // ── Widget builders ───────────────────────────────────────────────────────────
 
 void FaceDisplay::build_eye(lv_obj_t* parent, EyeWidgets& w) {
-    // Clip container — LVGL 8.3 clips children to parent bounds by default
-    // (LV_OBJ_FLAG_OVERFLOW_VISIBLE would need to be set to disable clipping)
+    // Clip container — transparent; LVGL 8.3 clips children by default
     w.clip = lv_obj_create(parent);
     lv_obj_set_style_bg_opa(w.clip, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(w.clip, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(w.clip, 0, LV_PART_MAIN);
     lv_obj_clear_flag(w.clip, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Eye bitmap image (alpha-8 mask, recoloured white = sclera)
-    w.img = lv_img_create(w.clip);
-    lv_img_set_src(w.img, &g_eye_bitmap);
-    lv_obj_set_style_img_recolor(w.img, COLOR_SCLERA, LV_PART_MAIN);
-    lv_obj_set_style_img_recolor_opa(w.img, LV_OPA_COVER, LV_PART_MAIN);
-    // Pivot at image centre so zoom scales symmetrically
-    lv_img_set_pivot(w.img, STACKCHAN_EYE_W / 2, STACKCHAN_EYE_H / 2);
-    lv_img_set_zoom(w.img, 256);
+    // Sclera — white filled circle sized to fill the clip
+    w.sclera = lv_obj_create(w.clip);
+    lv_obj_set_style_radius(w.sclera, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(w.sclera, COLOR_SCLERA, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(w.sclera, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(w.sclera, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(w.sclera, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Pupil — dark oval, positioned inside clip
+    // Pupil — dark concentric circle
     w.pupil = lv_obj_create(w.clip);
     lv_obj_set_style_radius(w.pupil, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(w.pupil, COLOR_PUPIL, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(w.pupil, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(w.pupil, 0, LV_PART_MAIN);
     lv_obj_clear_flag(w.pupil, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Eyelid — black overlay at top of clip, height 0 when open
+    // Eyelid — black rectangle, height=0 = invisible; slides down during blink
     w.lid = lv_obj_create(w.clip);
     lv_obj_set_style_bg_color(w.lid, COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(w.lid, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(w.lid, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(w.lid, 0, LV_PART_MAIN);
-    lv_obj_set_size(w.lid, 200, 0);    // wide but zero height = invisible
-    lv_obj_set_pos(w.lid, -70, 0);     // spans across clip top
-    lv_obj_move_foreground(w.lid);     // always on top
+    lv_obj_set_size(w.lid, 200, 0);
+    lv_obj_set_pos(w.lid, -70, 0);
+    lv_obj_move_foreground(w.lid);
 }
 
 void FaceDisplay::build_mouth(lv_obj_t* parent) {
-    // Bitmap mouth image (used for IDLE and CONNECTING)
-    mouth_img_ = lv_img_create(parent);
-    lv_img_set_src(mouth_img_, &g_mouth_bitmap);
-    lv_obj_set_style_img_recolor(mouth_img_, COLOR_MOUTH, LV_PART_MAIN);
-    lv_obj_set_style_img_recolor_opa(mouth_img_, LV_OPA_COVER, LV_PART_MAIN);
-    lv_img_set_pivot(mouth_img_, STACKCHAN_MOUTH_W / 2, STACKCHAN_MOUTH_H / 2);
-    lv_img_set_zoom(mouth_img_, 256);
-    lv_obj_add_flag(mouth_img_, LV_OBJ_FLAG_HIDDEN);
-
-    // Arc mouth (LISTENING circle, THINKING flat, SPEAKING animated, ERROR frown)
+    // Single arc widget handles all expression states
     mouth_arc_ = lv_arc_create(parent);
     lv_arc_set_mode(mouth_arc_, LV_ARC_MODE_NORMAL);
     lv_arc_set_range(mouth_arc_, 0, 100);
     lv_arc_set_value(mouth_arc_, 100);
     lv_arc_set_bg_angles(mouth_arc_, 0, 360);
-    lv_obj_set_style_arc_color(mouth_arc_, COLOR_MOUTH, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(mouth_arc_, 8, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(mouth_arc_, 5, LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(mouth_arc_, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_opa(mouth_arc_, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_add_flag(mouth_arc_, LV_OBJ_FLAG_HIDDEN);
-}
-
-void FaceDisplay::build_blush(lv_obj_t* parent) {
-    auto mk_blush = [&](lv_obj_t* p, lv_coord_t x, lv_coord_t y) -> lv_obj_t* {
-        lv_obj_t* b = lv_obj_create(p);
-        lv_obj_set_size(b, 36, 18);
-        lv_obj_set_pos(b, x, y);
-        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(b, COLOR_BLUSH, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(b, LV_OPA_40, LV_PART_MAIN);
-        lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
-        return b;
-    };
-    blush_l_ = mk_blush(parent,  86, 177);
-    blush_r_ = mk_blush(parent, 238, 177);
 }
 
 void FaceDisplay::build_accent_ring(lv_obj_t* parent) {
@@ -247,25 +217,15 @@ void FaceDisplay::apply_eye_preset(EyeWidgets& w, bool is_left, const face_prese
     lv_obj_set_size(w.clip, clip_w, clip_h);
     lv_obj_set_pos(w.clip, cx - clip_w / 2, cy - clip_h / 2);
 
-    // Scale the eye bitmap so its width matches eye_width.
-    // The height scales proportionally; clipping handles any height overshoot.
-    //   zoom = (eye_width / STACKCHAN_EYE_W) * 256  (fixed-point)
-    uint16_t zoom = (uint16_t)((int32_t)p.eye_width * 256 / STACKCHAN_EYE_W);
-    if (zoom < 64)  zoom = 64;
-    if (zoom > 512) zoom = 512;
-    lv_img_set_zoom(w.img, zoom);
+    // Sclera fills the clip exactly — LV_RADIUS_CIRCLE makes it a clean circle/oval
+    lv_obj_set_size(w.sclera, clip_w, clip_h);
+    lv_obj_set_pos(w.sclera, 0, 0);
 
-    // Place the bitmap so it is centred inside the clip.
-    // Scaled dimensions of the rendered image:
-    int16_t img_w = (int16_t)((int32_t)STACKCHAN_EYE_W * zoom / 256);
-    int16_t img_h = (int16_t)((int32_t)STACKCHAN_EYE_H * zoom / 256);
-    lv_obj_set_pos(w.img, (clip_w - img_w) / 2, (clip_h - img_h) / 2);
-
-    // Size lid to match clip width (height stays 0 while open)
-    lv_obj_set_width(w.lid, clip_w + 4);
-
-    // Pupil initial placement (touch offsets applied separately)
+    // Pupil sized from preset
     lv_obj_set_size(w.pupil, p.pupil_width, p.pupil_height);
+
+    // Lid spans full clip width (height stays 0 while open)
+    lv_obj_set_width(w.lid, clip_w + 4);
 }
 
 void FaceDisplay::refresh_pupil_positions(const face_preset_t& p) {
@@ -303,89 +263,83 @@ void FaceDisplay::refresh_pupil_positions(const face_preset_t& p) {
 }
 
 void FaceDisplay::apply_mouth_preset(device_state_t s, const face_preset_t& p) {
-    // Compute mouth centre in display coords
+    // All states use a single arc widget — no bitmaps
+    lv_obj_clear_flag(mouth_arc_, LV_OBJ_FLAG_HIDDEN);
+
     int16_t mouth_cx = FACE_CX;
-    int16_t mouth_cy = (int16_t)(FACE_CY + p.mouth_y_offset);
+    int16_t mouth_cy = FACE_CY + p.mouth_y_offset;
 
-    bool use_bitmap = (s == DEVICE_STATE_IDLE     ||
-                       s == DEVICE_STATE_UNKNOWN  ||
-                       s == DEVICE_STATE_CONNECTING);
+    // LVGL arc: 0°=right, 90°=bottom, 180°=left, 270°=top (clockwise)
+    // Arc through 90° (bottom) curves DOWNWARD = frown
+    // Arc through 270° (top)   curves UPWARD   = smile
 
-    if (use_bitmap) {
-        lv_obj_clear_flag(mouth_img_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(mouth_arc_,   LV_OBJ_FLAG_HIDDEN);
-
-        // Scale bitmap to match mouth_width
-        uint16_t zoom = (uint16_t)((int32_t)p.mouth_width * 256 / STACKCHAN_MOUTH_W);
-        if (zoom < 64)  zoom = 64;
-        if (zoom > 512) zoom = 512;
-        lv_img_set_zoom(mouth_img_, zoom);
-        lv_img_set_angle(mouth_img_, 0);   // ensure no leftover rotation
-
-        int16_t img_w = (int16_t)((int32_t)STACKCHAN_MOUTH_W * zoom / 256);
-        int16_t img_h = (int16_t)((int32_t)STACKCHAN_MOUTH_H * zoom / 256);
-        lv_obj_set_pos(mouth_img_, mouth_cx - img_w / 2, mouth_cy - img_h / 2);
-
-    } else {
-        lv_obj_add_flag(mouth_img_,   LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(mouth_arc_, LV_OBJ_FLAG_HIDDEN);
-
-        // Arc size based on mouth_width × mouth_width (square bounding box)
-        int16_t arc_sz = p.mouth_width;
-        lv_obj_set_size(mouth_arc_, arc_sz, arc_sz);
-        lv_obj_set_pos(mouth_arc_, mouth_cx - arc_sz / 2, mouth_cy - arc_sz / 2);
-        lv_obj_set_style_arc_width(mouth_arc_, p.mouth_height, LV_PART_INDICATOR);
-
-        // Configure arc angles per state
-        switch (s) {
-            case DEVICE_STATE_LISTENING:
-                // "O" mouth — full circle
-                lv_arc_set_angles(mouth_arc_, 0, 355);
-                lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
-                break;
-
-            case DEVICE_STATE_THINKING:
-                // Flat closed mouth — tiny arc slice at bottom
-                lv_arc_set_angles(mouth_arc_, 255, 285);
-                lv_obj_set_style_arc_color(mouth_arc_, COLOR_MOUTH, LV_PART_INDICATOR);
-                break;
-
-            case DEVICE_STATE_SPEAKING:
-                // Animated open smile — starting angle; set_mouth_rms() updates it
-                lv_arc_set_angles(mouth_arc_, 220, 320);
-                lv_obj_set_style_arc_color(mouth_arc_, COLOR_MOUTH, LV_PART_INDICATOR);
-                break;
-
-            case DEVICE_STATE_ERROR:
-                // Frown — inverted smile arc
-                lv_arc_set_angles(mouth_arc_, 20, 160);
-                lv_obj_set_style_arc_color(mouth_arc_,
-                    lv_color_hex(0x9944FF), LV_PART_INDICATOR);
-                break;
-
-            default:
-                lv_arc_set_angles(mouth_arc_, 200, 340);
-                lv_obj_set_style_arc_color(mouth_arc_, COLOR_MOUTH, LV_PART_INDICATOR);
-                break;
-        }
-    }
-}
-
-void FaceDisplay::apply_blush_opacity(device_state_t s) {
-    lv_opa_t opa_l, opa_r;
     switch (s) {
         case DEVICE_STATE_IDLE:
-        case DEVICE_STATE_SPEAKING:
-            opa_l = opa_r = LV_OPA_40; break;
-        case DEVICE_STATE_LISTENING:
-            opa_l = opa_r = LV_OPA_50; break;
-        case DEVICE_STATE_THINKING:
-            opa_l = opa_r = LV_OPA_20; break;
+        case DEVICE_STATE_UNKNOWN: {
+            // Gentle frown — arc dipping slightly downward
+            int16_t sz = 130;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 35, 145);   // 110° span centred at 90°
+            lv_obj_set_style_arc_width(mouth_arc_, 5, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+            break;
+        }
+        case DEVICE_STATE_CONNECTING: {
+            // Nearly flat — short arc at bottom, grey
+            int16_t sz = 100;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 70, 110);   // 40° span, nearly flat
+            lv_obj_set_style_arc_width(mouth_arc_, 4, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, lv_color_hex(0x888888), LV_PART_INDICATOR);
+            break;
+        }
+        case DEVICE_STATE_LISTENING: {
+            // Open "O" mouth — full circle
+            int16_t sz = 50;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 0, 355);
+            lv_obj_set_style_arc_width(mouth_arc_, 7, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+            break;
+        }
+        case DEVICE_STATE_THINKING: {
+            // Nearly flat, thin
+            int16_t sz = 80;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 75, 105);   // 30° span at bottom
+            lv_obj_set_style_arc_width(mouth_arc_, 4, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+            break;
+        }
+        case DEVICE_STATE_SPEAKING: {
+            // Animated mouth — set_mouth_rms() updates angles in real time
+            int16_t sz = 130;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 55, 125);   // 70° span, will widen with RMS
+            lv_obj_set_style_arc_width(mouth_arc_, 6, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+            break;
+        }
+        case DEVICE_STATE_ERROR: {
+            // Deep frown — arc through 270° (top) curves UPWARD = inverted mouth
+            int16_t sz = 120;
+            lv_obj_set_size(mouth_arc_, sz, sz);
+            lv_obj_set_pos(mouth_arc_, mouth_cx - sz/2, mouth_cy - sz/2);
+            lv_arc_set_angles(mouth_arc_, 215, 325);  // 110° span centred at 270°
+            lv_obj_set_style_arc_width(mouth_arc_, 5, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(mouth_arc_, lv_color_hex(0xFF4444), LV_PART_INDICATOR);
+            break;
+        }
         default:
-            opa_l = opa_r = LV_OPA_TRANSP; break;
+            lv_arc_set_angles(mouth_arc_, 35, 145);
+            lv_obj_set_style_arc_color(mouth_arc_, COLOR_SCLERA, LV_PART_INDICATOR);
+            break;
     }
-    lv_obj_set_style_bg_opa(blush_l_, opa_l, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(blush_r_, opa_r, LV_PART_MAIN);
 }
 
 // ── Animations ────────────────────────────────────────────────────────────────

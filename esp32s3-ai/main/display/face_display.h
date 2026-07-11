@@ -39,10 +39,10 @@
 #define TOUCH_HOLD_TICKS  5
 
 struct EyeWidgets {
-    lv_obj_t* clip  = nullptr;   // container — LVGL 8.3 clips children by default
-    lv_obj_t* img   = nullptr;   // lv_img: alpha-8 eye bitmap, recoloured white
-    lv_obj_t* pupil = nullptr;   // dark rounded oval
-    lv_obj_t* lid   = nullptr;   // black top-overlay, animated for blink
+    lv_obj_t* clip   = nullptr;  // transparent container — LVGL 8.3 clips children by default
+    lv_obj_t* sclera = nullptr;  // white filled circle (eye white)
+    lv_obj_t* pupil  = nullptr;  // dark filled circle (pupil/iris)
+    lv_obj_t* lid    = nullptr;  // black rectangle overlay, animated for blink
 };
 
 class FaceDisplay {
@@ -73,11 +73,8 @@ public:
 private:
     EyeWidgets  eye_l_, eye_r_;
 
-    lv_obj_t*  mouth_img_   = nullptr;  // bitmap smile (IDLE / CONNECTING)
-    lv_obj_t*  mouth_arc_   = nullptr;  // arc (LISTENING, THINKING, SPEAKING, ERROR)
+    lv_obj_t*  mouth_arc_   = nullptr;  // arc mouth (all states)
 
-    lv_obj_t*  blush_l_     = nullptr;
-    lv_obj_t*  blush_r_     = nullptr;
     lv_obj_t*  accent_ring_ = nullptr;
 
     device_state_t  current_state_  = DEVICE_STATE_UNKNOWN;
@@ -93,7 +90,6 @@ private:
     // ── Builders (called once from init) ─────────────────────────────
     void build_eye(lv_obj_t* parent, EyeWidgets& w);
     void build_mouth(lv_obj_t* parent);
-    void build_blush(lv_obj_t* parent);
     void build_accent_ring(lv_obj_t* parent);
 
     // ── Per-state update helpers ──────────────────────────────────────
@@ -103,11 +99,8 @@ private:
     // Update both pupils with combined static + touch offset.
     void refresh_pupil_positions(const face_preset_t& p);
 
-    // Configure the mouth widget(s) for the given state.
+    // Configure the mouth arc for the given state.
     void apply_mouth_preset(device_state_t s, const face_preset_t& p);
-
-    // Set blush opacity for the given state.
-    void apply_blush_opacity(device_state_t s);
 
     // ── Animations ───────────────────────────────────────────────────
     void trigger_blink();
