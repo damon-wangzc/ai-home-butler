@@ -21,6 +21,7 @@
 // extern "C" they become C functions and the duplicate name conflicts.
 // The include guard then blocks re-processing when ST77916.h pulls it in again.
 #include <esp_lcd_panel_io.h>
+#include <driver/gpio.h>
 
 // LCD + LVGL drivers (from reference project)
 extern "C" {
@@ -97,26 +98,43 @@ static void touch_tap_cb() {
     OrbMqttClient::instance().publish_touch();
 }
 
-// Poll CST816 touch controller at 50ms intervals.
-// Debounce: minimum TOUCH_DEBOUNCE_MS between wake triggers.
+// ── Touch interrupt via GPIO ─────────────────────────────────────────────────
+// The CST816 asserts its INT pin (GPIO I2C_Touch_INT_IO) LOW on every touch
+// event.  We latch the edge in an ISR (no I2C inside the ISR) and handle it
+// in touch_task.  This avoids calling esp_lcd_touch_read_data() from a second
+// task while LVGL's indev driver is already calling it, which caused:
+//   E lcd_panel.io.i2c: i2c transaction failed
+//   ***ERROR*** A stack overflow in task touch has been detected.
+
 #define TOUCH_DEBOUNCE_MS 500
 
-static void touch_task(void*) {
-    TickType_t last_tap = 0;
-    uint16_t tx = 0, ty = 0, strength = 0;
-    uint8_t  point_num = 0;
+static volatile bool s_touch_pending = false;
 
+static void IRAM_ATTR touch_isr_handler(void*) {
+    s_touch_pending = true;
+}
+
+static void touch_task(void*) {
+    // Configure falling-edge interrupt on CST816 INT pin.
+    // gpio_install_isr_service returns ESP_ERR_INVALID_STATE if already
+    // installed by another driver — that is fine, we just add our handler.
+    gpio_config_t io_conf = {};
+    io_conf.pin_bit_mask = (1ULL << I2C_Touch_INT_IO);
+    io_conf.mode         = GPIO_MODE_INPUT;
+    io_conf.pull_up_en   = GPIO_PULLUP_ENABLE;
+    io_conf.intr_type    = GPIO_INTR_NEGEDGE;
+    gpio_config(&io_conf);
+    gpio_install_isr_service(0);  // may already be installed — that is OK
+    gpio_isr_handler_add((gpio_num_t)I2C_Touch_INT_IO, touch_isr_handler, nullptr);
+
+    TickType_t last_tap = 0;
     while (true) {
-        if (tp) {
-            esp_lcd_touch_read_data(tp);
-            bool hit = esp_lcd_touch_get_coordinates(
-                tp, &tx, &ty, &strength, &point_num, 1);
-            if (hit && point_num > 0) {
-                TickType_t now = xTaskGetTickCount();
-                if ((now - last_tap) * portTICK_PERIOD_MS >= TOUCH_DEBOUNCE_MS) {
-                    last_tap = now;
-                    touch_tap_cb();
-                }
+        if (s_touch_pending) {
+            s_touch_pending = false;
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_tap) * portTICK_PERIOD_MS >= TOUCH_DEBOUNCE_MS) {
+                last_tap = now;
+                touch_tap_cb();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(50));
